@@ -43,34 +43,41 @@ function buildWorld() {
   const clubs = [];
   const leagues = [];
   for (const c of COUNTRIES) {
-    const clubIds = [];
+    const divisions = c.divisions || [c.league];
     const n = c.cities.length;
-    c.cities.forEach((city, i) => {
-      const strength = clamp(
-        Math.round(85 - (i * (23 / (n - 1))) + (c.rep - 4) * 2.2 + ((i * 7) % 3)),
-        55, 92,
-      );
-      const id = clubs.length;
-      clubs.push({
-        id,
-        city,
-        name: `${city} ${c.suffixes[i % c.suffixes.length]}`,
+    divisions.forEach((divisionName, tier) => {
+      const clubIds = [];
+      for (let i = 0; i < 16; i++) {
+        const strength = clamp(Math.round(
+          86 - tier * 11 - i * (14 / 15) + (c.rep - 4) * 2.2 + ((i * 7) % 3),
+        ), 36, 92);
+        const city = c.cities[(i + tier * 5) % n];
+        const id = clubs.length;
+        clubs.push({
+          id,
+          city,
+          name: `${city} ${c.suffixes[(i + tier * 3) % c.suffixes.length]}`,
+          countryCode: c.code,
+          countryName: c.name,
+          leagueId: `${c.code}-${tier}`,
+          tier,
+          strength,
+          stars: starsFor(strength),
+          bankrupt: false,
+          crises: 0,
+        });
+        clubIds.push(id);
+      }
+      leagues.push({
+        id: `${c.code}-${tier}`,
         countryCode: c.code,
         countryName: c.name,
-        leagueId: c.code,
-        strength,
-        stars: starsFor(strength),
+        flag: c.flag,
+        name: divisionName,
+        tier,
+        rep: Math.max(1, c.rep - tier * 1.2),
+        clubIds,
       });
-      clubIds.push(id);
-    });
-    leagues.push({
-      id: c.code,
-      countryCode: c.code,
-      countryName: c.name,
-      flag: c.flag,
-      name: c.league,
-      rep: c.rep,
-      clubIds,
     });
   }
   return { clubs, leagues };
@@ -125,23 +132,30 @@ function sponsorTierFor(strength) {
 }
 
 function sponsorValue(brand, fanbase, fame) {
-  const raw = brand.base * 0.55e6 * (0.55 + fanbase / 120) * (1 + fame / 170);
+  const raw = brand.base * 0.26e6 * (0.5 + fanbase / 150) * (1 + fame / 220);
   return Math.round(raw / 1e5) * 1e5;
+}
+
+/** Teto de caixa: acima disso o clube reinveste em elenco, estrutura e bônus. */
+function cashCap(strength) {
+  return Math.round((1.6e6 + Math.max(0, strength - 50) * 0.85e6) / 1e5) * 1e5;
 }
 
 function ensureFinance(career, club) {
   if (club.finance) return club.finance;
   const rng = seededRng(hash(`${career.seed}:${club.id}:fin`));
-  const fanbase = clamp(Math.round(18 + (club.strength - 55) * 1.7 + rng() * 10), 6, 100);
+  const fanbase = clamp(Math.round(13 + (club.strength - 50) * 1.6 + rng() * 10 - (club.tier || 0) * 6), 4, 100);
   const tier = sponsorTierFor(club.strength);
   const brand = BRANDS[tier][Math.floor(rng() * BRANDS[tier].length)];
+  const cash = clamp((club.strength - 58) * 0.75e6, -4e6, 12e6) + rng() * 1.2e6;
   club.finance = {
     fanbase,
-    cash: Math.round(((club.strength - 64) * 1.1e6 + rng() * 3e6) / 1e5) * 1e5,
+    cash: Math.min(Math.round(cash / 1e5) * 1e5, cashCap(club.strength)),
     sponsor: { tier, brand: brand.name, value: sponsorValue(brand, fanbase, 0) },
     delayed: 0,
     seasonRevenue: 0,
     seasonCost: 0,
+    prize: 0,
   };
   return club.finance;
 }
@@ -157,23 +171,24 @@ export function attendanceFor(career, club) {
 }
 
 function wageBill(strength) {
-  return 1.2e6 * Math.exp((strength - 55) / 8);
+  return 0.9e6 * Math.exp((strength - 55) / 9);
 }
 
-function opsCost(strength) {
-  return 3e6 + Math.max(0, strength - 50) * 0.6e6;
+function opsCost(strength, tier = 0, fanbase = 30) {
+  const base = 0.7e6 + fanbase * 0.045e6 + Math.max(0, strength - 46) * 0.3e6;
+  return base * (1 - Math.min(0.25, tier * 0.07));
 }
 
 function prizeFor(pos, rep) {
-  const base = [30, 16, 10, 7, 5, 4][pos - 1] ?? (pos <= 10 ? 2 : 0.6);
-  return base * 1e6 * (0.6 + rep * 0.2);
+  const base = [18, 11, 8, 6, 5, 4][pos - 1] ?? (pos <= 10 ? 1.6 : 0.8);
+  return base * 1e6 * (0.5 + rep * 0.12);
 }
 
 function teamFinance(career, club) {
   const f = ensureFinance(career, club);
   const gate = attendanceFor(career, club).attendance * 42 * 19;
   const revenue = f.sponsor.value + gate + f.prize;
-  const cost = wageBill(club.strength) + opsCost(club.strength);
+  const cost = wageBill(club.strength) + opsCost(club.strength, club.tier || 0, f.fanbase);
   return { revenue, cost, gate, wage: wageBill(club.strength) };
 }
 
@@ -219,6 +234,7 @@ function startSeason(career, clubId) {
     year: 2026 + (career.seasonNo - 1),
     leagueId: league.id,
     leagueName: league.name,
+    tier: league.tier || 0,
     countryName: league.countryName,
     flag: league.flag,
     rounds,
@@ -243,7 +259,6 @@ function startSeason(career, clubId) {
 export function createCareer({ name, countryCode, position, seed }) {
   const world = buildWorld();
   const country = COUNTRY_BY_CODE[countryCode] || COUNTRIES[0];
-  const league = world.leagues.find((l) => l.id === country.code);
   const player = {
     name: (name || '').trim() || 'Novo Craque',
     countryCode: country.code,
@@ -254,6 +269,8 @@ export function createCareer({ name, countryCode, position, seed }) {
     attrs: startingAttrs(position),
     potential: ri(78, 93),
     reputation: 6,
+    stigma: 0,
+    bank: 0,
     form: 62,
     morale: 72,
     fitness: 100,
@@ -268,7 +285,7 @@ export function createCareer({ name, countryCode, position, seed }) {
   };
 
   const career = {
-    version: 2,
+    version: 3,
     seed: seed || Math.floor(Math.random() * 1e9),
     player,
     clubs: world.clubs,
@@ -276,6 +293,7 @@ export function createCareer({ name, countryCode, position, seed }) {
     squads: {},
     nations: null,
     champions: {},
+    lastTables: {},
     news: [],
     seasonNo: 1,
     season: null,
@@ -286,10 +304,13 @@ export function createCareer({ name, countryCode, position, seed }) {
 
   C.ensureNations(career);
 
-  // Clube inicial: precisa ser pequeno e dar espaço para o jogador ser titular.
+  // Clube inicial: divisões de baixo, com espaço para o jogador ser titular.
   const ov = overall(player);
-  const leagueClubs = league.clubIds.map((id) => world.clubs[id]);
-  const evaluated = leagueClubs.map((club) => {
+  const countryLeagues = world.leagues.filter((l) => l.countryCode === country.code);
+  const lower = countryLeagues.filter((l) => l.tier > 0);
+  const startPool = (lower.length ? lower : countryLeagues).flatMap((l) => l.clubIds);
+  const evaluated = startPool.map((id) => {
+    const club = world.clubs[id];
     const squad = squadFor(career, club.id);
     const rivals = squad.filter((s) => s.position === player.position).map((s) => s.rating);
     return { club, best: rivals.length ? Math.max(...rivals) : 60 };
@@ -298,13 +319,14 @@ export function createCareer({ name, countryCode, position, seed }) {
   const startClub = startable.length
     ? startable[Math.min(startable.length - 1, ri(0, 2))].club
     : evaluated.sort((a, b) => a.club.strength - b.club.strength)[0].club;
+  const startLeague = world.leagues.find((l) => l.id === startClub.leagueId);
 
   player.clubId = startClub.id;
   player.contract = { wage: wageFor(startClub, ov), years: 2 };
   startSeason(career, startClub.id);
 
   const fin = ensureFinance(career, startClub);
-  news(career, `Você assinou com o ${startClub.name} (${startClub.city}).`, 'good');
+  news(career, `Você assinou com o ${startClub.name} (${startClub.city}), da ${startLeague ? startLeague.name : 'liga local'}.`, 'good');
   if (fin.cash < 0) news(career, `${startClub.name} está com as contas no vermelho: salários podem atrasar.`, 'bad');
   career.seasonSummary = null;
   return career;
@@ -675,7 +697,8 @@ function applyMatchOutcome(career, detail, bucket = 'league') {
     if (detail.rating >= 8.3) ps.motm++;
     if (detail.win) ps.wins++; else if (detail.draw) ps.draws++; else ps.losses++;
     p.fitness = clamp(p.fitness - detail.minutes * (bucket === 'nat' ? 0.1 : 0.19), 0, 100);
-    p.reputation = clamp(p.reputation + (detail.rating - 6.6) * 0.7 + detail.goals * 0.5, 0, 100);
+    p.reputation = clamp(p.reputation + ((detail.rating - 6.6) * 0.7 + detail.goals * 0.5) *
+      (1 - Math.min(0.6, (p.stigma || 0) * 0.2)), 0, 100);
     p.morale = clamp(p.morale + (detail.win ? 4 : detail.draw ? 0 : -3) + (detail.rating - 6.4) * 2, 0, 100);
     p.form = clamp(p.form + (detail.rating - 6.4) * 3, 0, 100);
     detail.injured = false;
@@ -724,6 +747,15 @@ function awardComp(career, comp, champion) {
   if (comp.kind === 'nation' && !p.national.honours.includes(label)) p.national.honours.push(label);
   p.reputation = clamp(p.reputation + (comp.kind === 'nation' ? 5 : 3), 0, 100);
   p.morale = clamp(p.morale + 10, 0, 100);
+  if (comp.kind === 'club') {
+    const cashPrize = String(comp.id).startsWith('cc-') ? 9e6
+      : String(comp.id).startsWith('scwc-') ? 20e6
+      : String(comp.id).startsWith('cwc-') ? 12e6 : 0;
+    if (cashPrize > 0) {
+      ensureFinance(career, career.clubs[p.clubId]).cash += cashPrize;
+      news(career, `Premiação de ${formatMoney(cashPrize)} pela conquista do ${comp.name}.`, 'good');
+    }
+  }
   news(career, `${label} conquistada!`, 'good');
 }
 
@@ -897,40 +929,95 @@ function adjustSquad(career, club, delta) {
   return null;
 }
 
+/** Falência: o clube perde força, torcida e patrocínio — e o jogador carrega a fama. */
+function bankruptcy(career, club) {
+  const f = ensureFinance(career, club);
+  const p = career.player;
+  club.bankrupt = true;
+  club.crises = (club.crises || 0) + 1;
+  club.strength = clamp(club.strength - 9, 34, 95);
+  club.stars = starsFor(club.strength);
+  f.fanbase = clamp(Math.round(f.fanbase * 0.6), 4, 100);
+  f.cash = 0;
+  f.delayed = 0;
+  f.sponsor = { tier: 'nenhum', brand: 'Sem patrocinador', value: 0 };
+  for (const s of career.squads[club.id] || []) s.rating = clamp(Math.round(s.rating - 6), 38, 96);
+  news(career, `💥 ${club.name} decretou falência: perdeu força, torcida e patrocinadores.`, 'bad');
+
+  if (club.id === p.clubId) {
+    p.reputation = clamp(p.reputation - (12 + club.crises * 3), 0, 100);
+    p.stigma = clamp((p.stigma || 0) + 2, 0, 5);
+    p.stigmaSeason = career.season.year;
+    p.morale = clamp(p.morale - 22, 0, 100);
+    news(career, `A falência do ${club.name} manchou sua reputação: você não conseguiu salvar o clube.`, 'bad');
+  }
+}
+
 function evolveWorld(career) {
   const season = career.season;
   const table = standings(career);
-  const positions = new Map(table.map((r, i) => [r.clubId, i + 1]));
   const p = career.player;
-  const changes = [];
 
+  // Ordem final de cada divisão (a do jogador vem da tabela real;
+  // as demais seguem a força do elenco).
+  const orders = new Map();
   for (const league of career.leagues) {
     const order = league.id === season.leagueId
       ? table.map((r) => r.clubId)
       : league.clubIds.slice().sort((a, b) => career.clubs[b].strength - career.clubs[a].strength);
+    orders.set(league.id, order);
+  }
 
+  const changes = [];
+  for (const league of career.leagues) {
+    const order = orders.get(league.id);
     order.forEach((id, idx) => {
       const club = career.clubs[id];
       const f = ensureFinance(career, club);
-      const pos = positions.get(id) || idx + 1;
+      const pos = idx + 1;
       const before = club.strength;
+
       f.prize = prizeFor(pos, league.rep);
       const fin = teamFinance(career, club);
-      f.cash += Math.round((fin.revenue - fin.cost) / 1e5) * 1e5;
+      f.cash += fin.revenue - fin.cost;
       f.seasonRevenue = fin.revenue;
       f.seasonCost = fin.cost;
-      f.delayed = f.cash < -2e6 ? Math.min(9, f.delayed + 1) : 0;
 
-      const perf = pos <= 2 ? 1.5 : pos <= 5 ? 0.8 : pos <= 9 ? 0.1 : pos <= 13 ? -0.7 : -1.4;
-      const cashScore = clamp(f.cash / 40e6, -1.5, 1.5);
-      let delta = clamp(cashScore * 1.1 + perf + rnd(-0.5, 0.5), -3, 3);
-      if (f.delayed >= 2) delta -= 1;
+      // Dívida cresce com juros e a crise se instala de verdade.
+      if (f.cash < 0) f.cash *= 1.08;
+      f.delayed = f.cash < -1.5e6 ? Math.min(9, f.delayed + 1) : 0;
+
+      const tier = club.tier || 0;
+      const perf = pos <= 2 ? 1.0 : pos <= 5 ? 0.55 : pos <= 10 ? 0.05 : pos <= 13 ? -0.5 : -1.0;
+      const cap = cashCap(club.strength);
+      const cashScore = clamp((f.cash - cap * 0.35) / (cap * 0.9), -1.2, 0.9);
+      // Cada divisão tem seu próprio nível: evita inflação geral de força.
+      const anchor = 80 - tier * 13;
+      let delta = perf + cashScore * 0.5 + rnd(-0.35, 0.35) - (club.strength - anchor) * 0.08;
+      if (f.delayed >= 2) delta -= 0.5;
+
+      // Excedente acima do teto vira reforço de elenco/estrutura: os grandes
+      // não acumulam centenas de milhões, o dinheiro volta para o futebol.
+      if (f.cash > cap) {
+        const excess = f.cash - cap;
+        f.cash = cap;
+        delta += clamp(excess / 90e6, 0, 0.3);
+      }
       delta = Math.round(delta * 10) / 10;
 
-      f.fanbase = clamp(f.fanbase + (pos <= 2 ? 5 : pos <= 6 ? 2 : pos >= 13 ? -5 : 0) + rnd(-1, 1), 5, 100);
-      club.strength = clamp(Math.round(before + delta), 50, 95);
+      f.fanbase = clamp(f.fanbase + (pos <= 2 ? 4 : pos <= 6 ? 2 : pos >= 14 ? -4 : 0) + rnd(-1, 1), 4, 100);
+      if (f.delayed >= 2) f.fanbase = clamp(f.fanbase - 2, 4, 100);
+      club.strength = clamp(Math.round(before + delta), 34, 95);
       club.stars = starsFor(club.strength);
+      f.cash = Math.min(f.cash, cashCap(club.strength));
       changes.push({ club, delta });
+
+      if (!club.bankrupt && f.cash < -18e6 && f.delayed >= 4) bankruptcy(career, club);
+      // Clube já falido que volta a mergulhar em dívida renegocia com credores.
+      if (club.bankrupt && f.cash < -8e6) {
+        f.cash = -1e6;
+        if (club.id === p.clubId) news(career, `${club.name} renegociou a dívida com os credores.`, 'info');
+      }
     });
   }
 
@@ -940,8 +1027,39 @@ function evolveWorld(career) {
     if (ev && club.id === p.clubId) news(career, ev.text, ev.kind === 'in' ? 'good' : 'bad');
   }
 
+  // Classificação final guardada para as vagas continentais do ano seguinte.
+  career.lastTables = career.lastTables || {};
+  for (const league of career.leagues) career.lastTables[league.id] = orders.get(league.id).slice();
+
+  // Acesso e rebaixamento: 2 sobem, 2 caem em cada limite de divisão.
+  const countries = [...new Set(career.leagues.map((l) => l.countryCode))];
+  for (const code of countries) {
+    const tiers = career.leagues.filter((l) => l.countryCode === code).sort((a, b) => a.tier - b.tier);
+    for (let t = 0; t < tiers.length - 1; t++) {
+      const up = orders.get(tiers[t + 1].id).slice(0, 2);
+      const down = orders.get(tiers[t].id).slice(-2);
+      for (const id of down) {
+        career.clubs[id].leagueId = tiers[t + 1].id;
+        career.clubs[id].tier = tiers[t + 1].tier;
+      }
+      for (const id of up) {
+        career.clubs[id].leagueId = tiers[t].id;
+        career.clubs[id].tier = tiers[t].tier;
+      }
+    }
+  }
+  for (const league of career.leagues) {
+    league.clubIds = career.clubs.filter((c) => c.leagueId === league.id).map((c) => c.id);
+  }
+
   const myClub = career.clubs[p.clubId];
   const f = ensureFinance(career, myClub);
+  const myLeague = career.leagues.find((l) => l.id === myClub.leagueId);
+  const oldTier = season.tier != null ? season.tier : (myLeague ? myLeague.tier : 0);
+  const promoted = !!myLeague && myLeague.tier < oldTier;
+  const relegated = !!myLeague && myLeague.tier > oldTier;
+  if (promoted) news(career, `🎉 ${myClub.name} subiu para a ${myLeague.name}!`, 'good');
+  if (relegated) news(career, `⚠ ${myClub.name} caiu para a ${myLeague.name}.`, 'bad');
 
   if (f.delayed > 0) {
     p.morale = clamp(p.morale - 8 - f.delayed * 2, 0, 100);
@@ -949,10 +1067,13 @@ function evolveWorld(career) {
   } else if (f.cash > 20e6) {
     p.morale = clamp(p.morale + 3, 0, 100);
   }
-  if (f.cash < -15e6) news(career, `${myClub.name} está à beira da falência e a torcida protesta.`, 'bad');
+  if (f.cash < -8e6) news(career, `${myClub.name} está à beira da falência e a torcida protesta.`, 'bad');
 
   return {
     clubName: myClub.name,
+    division: myLeague ? myLeague.name : '',
+    promoted,
+    relegated,
     sponsor: f.sponsor,
     cash: f.cash,
     delayed: f.delayed,
@@ -969,12 +1090,13 @@ function renewSponsors(career) {
   for (const club of career.clubs) {
     const f = ensureFinance(career, club);
     const fame = club.id === p.clubId ? p.reputation : 0;
-    let tier = sponsorTierFor(club.strength);
-    if (fame >= 62 && tier !== 'mundial') tier = TIERS[Math.min(TIERS.length - 1, TIERS.indexOf(tier) + 1)];
-    if (fame >= 80) tier = 'mundial';
-    if ((f.cash < -40e6 || f.delayed >= 3) && tier !== 'local') {
-      tier = TIERS[Math.max(0, TIERS.indexOf(tier) - 1)];
-    }
+    let idx = TIERS.indexOf(sponsorTierFor(club.strength));
+    if (fame >= 62) idx += 1;
+    if (fame >= 80) idx = TIERS.length - 1;
+    // Divisão inferior não fecha contrato mundial, nem com craque no elenco.
+    idx = Math.min(idx, Math.max(0, TIERS.length - 1 - (club.tier || 0)));
+    if ((f.cash < -8e6 || f.delayed >= 3) && idx > 0) idx -= 1;
+    let tier = TIERS[idx];
     if (f.delayed >= 6) tier = 'nenhum';
 
     if (tier === 'nenhum') {
@@ -999,33 +1121,122 @@ function renewSponsors(career) {
 function generateOffers(career) {
   const p = career.player;
   const ov = overall(p);
+  const stigma = p.stigma || 0;
+  const prestige = (p.awards || []).length;
+  // Reputação manchada afasta os clubes grandes; prêmios individuais atraem.
+  const ceiling = ov + 13 + Math.min(6, prestige * 1.5) - stigma * 5;
   const pool = career.clubs.filter((c) => {
     if (c.id === p.clubId) return false;
-    if (c.strength > ov + 13) return false;
+    if (c.bankrupt) return false;
+    if (c.strength > ceiling) return false;
     if (c.strength < ov - 15) return false;
     return true;
   });
-  const weighted = shuffle(pool).slice(0, Math.max(1, Math.min(pool.length, ri(3, 6))));
+  const count = ri(2, 4) + Math.min(3, Math.floor(prestige / 2)) - (stigma ? 1 : 0);
+  const weighted = shuffle(pool).slice(0, Math.max(1, Math.min(pool.length, count)));
   return weighted.map((club, i) => {
     const fin = ensureFinance(career, club);
     const afford = clamp(fin.cash / 8e6 + 1, 0.45, 1.4);
     const role = club.strength > ov + 3 ? 'rotacao' : 'titular';
+    const league = career.leagues.find((l) => l.id === club.leagueId);
     return {
       id: `offer-${i}`,
       clubId: club.id,
       clubName: club.name,
-      leagueName: career.leagues.find((l) => l.id === club.leagueId).name,
+      leagueName: league ? league.name : '',
       countryName: club.countryName,
       flag: (COUNTRY_BY_CODE[club.countryCode] || {}).flag || '',
       strength: club.strength,
       stars: club.stars,
-      wage: Math.round(wageFor(club, ov) * rnd(1.0, 1.35) * afford / 500) * 500,
+      wage: Math.round(wageFor(club, ov) * rnd(1.0, 1.35) * afford *
+        (1 - stigma * 0.12) * (1 + Math.min(0.3, prestige * 0.02)) / 500) * 500,
       years: ri(2, 4),
       role,
       sponsor: fin.sponsor,
       inDebt: fin.cash < 0,
     };
   }).sort((a, b) => b.strength - a.strength);
+}
+
+/* ------------------------------------------------------------------ */
+/* Prêmios individuais                                                 */
+/* ------------------------------------------------------------------ */
+
+const AWARDS = {
+  ballon: { name: 'Bola de Ouro', icon: '🥇', bonus: 6e6 },
+  yashin: { name: 'Troféu Yashin (melhor goleiro)', icon: '🧤', bonus: 3e6 },
+  golden: { name: 'Golden Boy', icon: '🌟', bonus: 2e6 },
+  puskas: { name: 'Prêmio Puskás', icon: '🚀', bonus: 1.5e6 },
+  team: { name: 'Seleção da temporada', icon: '📋', bonus: 2e6 },
+};
+
+function seasonTitles(career) {
+  const p = career.player;
+  return Object.values(career.season.comps || {}).filter((c) => c.champion != null &&
+    c.champion === (c.kind === 'club' ? p.clubId : p.countryCode));
+}
+
+function seasonScore(career, all) {
+  const p = career.player;
+  const rating = all.apps ? all.ratingSum / all.apps : 0;
+  const titles = seasonTitles(career);
+  const has = (prefix) => titles.some((t) => String(t.id).startsWith(prefix));
+  const league = career.leagues.find((l) => l.id === career.season.leagueId);
+  const level = league ? clamp(league.rep / 5, 0.4, 1) : 1;
+  const tier = league ? league.tier || 0 : 0;
+  let score = (all.apps * 0.42 + Math.min(all.goals, 45) * 1.9 + all.assists * 1.25 +
+    (rating - 6.2) * 62) * (0.6 + 0.4 * level);
+  if (career.champions && career.champions[career.season.leagueId] === p.clubId) score += 15;
+  if (has('cc-')) score += 20;
+  if (has('cwc-')) score += 12;
+  if (has('scwc-')) score += 16;
+  if (has('cont-')) score += 10;
+  if (has('conf-')) score += 12;
+  if (has('wc-')) score += 40;
+  score += clamp((p.reputation - 50) * 0.25, -6, 12);
+  score -= (p.stigma || 0) * 7;
+  return { score: Math.max(0, score), rating, titles, has, tier, level };
+}
+
+function rollAwards(career, all) {
+  const p = career.player;
+  p.awards = p.awards || [];
+  const { score, titles, tier } = seasonScore(career, all);
+  const gk = p.position === 'GOL';
+  const elite = tier === 0;
+  const out = [];
+
+  const give = (key, chance, rep) => {
+    if (!(chance > 0) || Math.random() >= chance) return false;
+    const info = AWARDS[key];
+    out.push({ key, name: info.name, icon: info.icon, bonus: info.bonus, year: career.season.year });
+    p.awards.push({ year: career.season.year, key, name: info.name, icon: info.icon });
+    p.bank = (p.bank || 0) + info.bonus;
+    p.reputation = clamp(p.reputation + rep, 0, 100);
+    news(career, `${info.icon} ${p.name} levou o ${info.name} de ${career.season.year} e embolsou ${formatMoney(info.bonus)}.`, 'good');
+    return true;
+  };
+
+  // Bola de Ouro: quem venceu a Copa do Mundo no ano tem prioridade; sem a
+  // Copa só uma temporada quase impecável leva o prêmio.
+  const wonWorldCup = titles.some((t) => String(t.id).startsWith('wc-'));
+  let ballon = wonWorldCup
+    ? clamp((score - 42) / 110, 0, 0.9)
+    : clamp((score - 96) / 120, 0, 0.55);
+  if (titles.some((t) => String(t.id).startsWith('cc-'))) ballon += 0.06;
+  if (career.champions && career.champions[career.season.leagueId] === p.clubId) ballon += 0.04;
+  if (!elite) ballon = 0; // o prêmio de melhor do mundo é decidido na elite
+  ballon = clamp(ballon, 0, 0.95);
+  if (gk) ballon /= 10; // goleiro tem 10x menos chance de Bola de Ouro
+  if (give('ballon', ballon, 12)) p.reputation = clamp(p.reputation + 4, 0, 100);
+
+  if (gk) give('yashin', elite ? clamp((score - 55) / 95, 0, 0.7) : 0, 8);
+  if (p.age <= 21 && all.apps >= 12) give('golden', clamp((score - 62) / 80, 0, 0.9), 8);
+  if (!gk && all.goals >= 8) {
+    give('puskas', clamp(0.01 + all.goals * 0.008 + (p.position === 'ATA' ? 0.03 : 0), 0, 0.25), 5);
+  }
+  give('team', elite ? clamp((score - 60) / 95, 0, 0.85) : 0, 4);
+  return out;
 }
 
 export function finishSeason(career) {
@@ -1063,9 +1274,23 @@ export function finishSeason(career) {
     if (!p.honours.includes(label)) p.honours.push(label);
   }
 
+  // Salários recebidos e prêmios individuais da temporada.
+  const finBefore = ensureFinance(career, career.clubs[p.clubId]);
+  p.bank = (p.bank || 0) + p.contract.wage * Math.max(0, 12 - (finBefore.delayed || 0));
+  const awards = rollAwards(career, all);
+
   endSeasonGrowth(career, all.apps);
   const finance = evolveWorld(career);
   renewSponsors(career);
+
+  // Aos poucos a má fama da falência some com boas temporadas.
+  if ((p.stigma || 0) > 0 && finance.delayed === 0 && all.apps >= 15 &&
+    p.stigmaSeason !== career.season.year && Math.random() < 0.5) {
+    p.stigma = Math.max(0, p.stigma - 1);
+    news(career, p.stigma === 0
+      ? 'Sua reputação voltou ao normal: os clubes voltaram a confiar em você.'
+      : 'Sua reputação está se recuperando depois da falência do clube anterior.', 'good');
+  }
 
   const summary = {
     year: season.year,
@@ -1090,6 +1315,9 @@ export function finishSeason(career) {
     honours: [...season.honours],
     comps: C.competitionStatus(career),
     finance,
+    awards,
+    bank: p.bank || 0,
+    stigma: p.stigma || 0,
     isTopScorer,
   };
 
@@ -1101,6 +1329,7 @@ export function finishSeason(career) {
     goals: all.goals,
     assists: all.assists,
     rating: summary.stats.avgRating,
+    division: finance.division,
     honour: season.honours[0] || '',
   });
 
@@ -1110,7 +1339,7 @@ export function finishSeason(career) {
     id: 'stay',
     clubId: p.clubId,
     clubName: summary.myClubName,
-    leagueName: season.leagueName,
+    leagueName: (career.leagues.find((l) => l.id === career.clubs[p.clubId].leagueId) || {}).name || season.leagueName,
     countryName: season.countryName,
     flag: season.flag,
     strength: career.clubs[p.clubId].strength,
@@ -1153,17 +1382,22 @@ export function clubFinanceInfo(career) {
   const club = career.clubs[career.player.clubId];
   const f = ensureFinance(career, club);
   const att = attendanceFor(career, club);
+  const league = career.leagues.find((l) => l.id === club.leagueId);
   return {
     clubName: club.name,
+    division: league ? league.name : '',
+    tier: club.tier || 0,
     sponsor: f.sponsor,
     cash: f.cash,
+    cap: cashCap(club.strength),
     delayed: f.delayed,
     fanbase: f.fanbase,
     attendance: att,
     strength: club.strength,
     wage: career.player.contract.wage,
-    crisis: f.cash < -15e6,
-    broke: f.cash < -2e6,
+    bankrupt: !!club.bankrupt,
+    crisis: f.cash < -8e6,
+    broke: f.cash < -1.5e6,
   };
 }
 

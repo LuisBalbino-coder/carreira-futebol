@@ -230,9 +230,45 @@ export const COUNTRIES = [
   },
 ];
 
-COUNTRIES.forEach((c) => { c.names = NAME_POOLS[c.code] || GENERIC_NAMES; });
+// Divisões de cada país (a primeira é a elite). Nomes genéricos quando não há
+// um equivalente real claro, mas mantendo a estrutura de acessos e quedas.
+const DIVISION_NAMES = {
+  BRA: ['Brasileirão Série A', 'Série B', 'Série C', 'Série D'],
+  ARG: ['Liga Argentina', 'Primera Nacional', 'Torneo Federal A'],
+  ENG: ['Premier League', 'Championship', 'League One'],
+  ESP: ['La Liga', 'La Liga 2', 'Primera Federación'],
+  ITA: ['Serie A', 'Serie B', 'Serie C'],
+  GER: ['Bundesliga', '2. Bundesliga', '3. Liga'],
+  FRA: ['Ligue 1', 'Ligue 2', 'National'],
+  POR: ['Primeira Liga', 'Liga Portugal 2', 'Liga 3'],
+  NED: ['Eredivisie', 'Eerste Divisie', 'Tweede Divisie'],
+  MEX: ['Liga MX', 'Liga de Expansión', 'Liga Premier'],
+  USA: ['Major League', 'USL Championship', 'USL League One'],
+  JPN: ['J1 League', 'J2 League', 'J3 League'],
+  TUR: ['Süper Lig', '1. Lig', '2. Lig'],
+  NGA: ['Liga Nigeriana', 'Nigeria National League', 'Nationwide League'],
+  EGY: ['Liga Egípcia', 'Segunda Divisão', 'Terceira Divisão'],
+  MAR: ['Botola Pro', 'Botola 2', 'Divisão Amadora'],
+  SEN: ['Liga Senegalense', 'Ligue 2', 'Ligue 3'],
+  RSA: ['Liga Sul-Africana', 'Motsepe Championship', 'SAFA Second Division'],
+};
+
+COUNTRIES.forEach((c) => {
+  c.names = NAME_POOLS[c.code] || GENERIC_NAMES;
+  c.divisions = DIVISION_NAMES[c.code] || [c.league, `${c.league} 2`, `${c.league} 3`];
+});
 
 export const COUNTRY_BY_CODE = Object.fromEntries(COUNTRIES.map((c) => [c.code, c]));
+
+// Copas continentais de clubes: vaga pelos primeiros colocados da liga.
+export const CONTINENTAL_CUPS = {
+  CONMEBOL: { name: 'Libertadores', icon: '🏆' },
+  UEFA: { name: 'Liga dos Campeões', icon: '⭐' },
+  CONCACAF: { name: 'Liga dos Campeões da Concacaf', icon: '🏆' },
+  AFC: { name: 'Liga dos Campeões da Ásia', icon: '🏆' },
+  CAF: { name: 'Liga dos Campeões da África', icon: '🏆' },
+  OFC: { name: 'Liga dos Campeões da Oceania', icon: '🏆' },
+};
 
 export const CONFEDERATIONS = {
   CONMEBOL: { name: 'América do Sul', cup: 'Copa América', short: 'CONMEBOL' },

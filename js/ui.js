@@ -27,7 +27,7 @@ function loadSave() {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || data.version !== 2 || !data.player || !data.season) return null;
+    if (!data || data.version !== 3 || !data.player || !data.season) return null;
     return data;
   } catch (e) { return null; }
 }
@@ -73,7 +73,10 @@ function playerCard() {
     <div class="kv"><span>Salário</span><b>${E.formatMoney(p.contract.wage)}/mês</b></div>
     <div class="kv"><span>Contrato</span><b>${p.contract.years} ${p.contract.years > 1 ? 'temporadas' : 'temporada'}</b></div>
     <div class="kv"><span>Reputação</span><b>${E.managerReputationLabel(p.reputation)}</b></div>
+    <div class="kv"><span>Patrimônio</span><b>${E.formatMoney(p.bank || 0)}</b></div>
     <div class="kv"><span>Papel no elenco</span><b>${E.ROLE_LABEL[role]}</b></div>
+    ${(p.stigma || 0) > 0 ? `<p class="warn">⚠ Reputação manchada pela falência do clube anterior (${p.stigma}/5). Clubes grandes evitam você e a seleção fecha as portas — recupere com boas temporadas.</p>` : ''}
+    ${(p.awards || []).length ? `<div class="divider"></div><h3>Prêmios individuais</h3><div>${p.awards.slice(-8).map((a) => `<span class="badge gold" style="margin:3px 6px 3px 0">${a.icon || '🏅'} ${esc(a.name)} ${a.year}</span>`).join('')}</div>` : ''}
     ${p.injuryWeeks > 0 ? `<div class="kv"><span>Lesão</span><b style="color:var(--red)">fora por ${p.injuryWeeks} sem.</b></div>` : ''}
     <div class="divider"></div>
     <h3>Temporada atual</h3>
@@ -113,6 +116,7 @@ function financeCard() {
   const cashColor = f.cash < 0 ? 'color:var(--red)' : f.cash < 5e6 ? 'color:var(--gold)' : '';
   return `<div class="card">
     <h3>Clube · finanças</h3>
+    <div class="kv"><span>Divisão</span><b>${esc(f.division)}</b></div>
     <div class="kv"><span>Força do clube</span><b>${f.strength} · ${'★'.repeat(career.clubs[career.player.clubId].stars)}</b></div>
     <div class="kv"><span>${tierLabel}</span><b>${esc(f.sponsor.brand)}</b></div>
     <div class="kv"><span>Valor do patrocínio</span><b>${E.formatMoney(f.sponsor.value)}/ano</b></div>
@@ -121,7 +125,8 @@ function financeCard() {
     <div class="kv"><span>Público no estádio</span><b>${f.attendance.attendance.toLocaleString('pt-BR')} de ${f.attendance.capacity.toLocaleString('pt-BR')}</b></div>
     <div class="kv"><span>Seu salário</span><b>${E.formatMoney(f.wage)}/mês</b></div>
     ${f.delayed > 0 ? `<p class="warn">⚠ Salários atrasados: ${f.delayed} ${f.delayed > 1 ? 'meses' : 'mês'} sem receber.</p>` : ''}
-    ${f.crisis ? '<p class="warn">⚠ Clube à beira da falência. A torcida abandonou o estádio.</p>' : f.broke ? '<p class="warn">⚠ Contas no vermelho. Contratações ficam difíceis.</p>' : ''}
+    <div class="kv"><span>Teto de caixa</span><b>${E.formatMoney(f.cap)}</b></div>
+    ${f.bankrupt ? '<p class="warn">💥 Clube falido: perdeu força e torcida, e sua reputação ficou manchada por não tê-lo salvado.</p>' : f.crisis ? '<p class="warn">⚠ Clube à beira da falência. A torcida abandonou o estádio.</p>' : f.broke ? '<p class="warn">⚠ Contas no vermelho. Contratações ficam difíceis.</p>' : ''}
     <p class="muted tiny" style="margin-top:8px">Sua fama atrai patrocinadores: quanto maior sua reputação, maior a marca que o clube fecha.</p>
   </div>`;
 }
@@ -207,6 +212,8 @@ function trainingPicker() {
 
 function viewMenu() {
   const saved = hasSave();
+  const divisionCount = COUNTRIES.reduce((n, c) => n + (c.divisions ? c.divisions.length : 1), 0);
+  const clubCount = divisionCount * 16;
   return `<div class="center"><div class="menu">
     <div class="logo">⚽</div>
     <h1>Carreira <em>2026</em></h1>
@@ -216,14 +223,14 @@ function viewMenu() {
       ${saved ? '<button class="btn primary" data-action="continue">Continuar carreira</button>' : ''}
       <button class="btn ${saved ? '' : 'primary'}" data-action="new">Nova carreira</button>
     </div>
-    <p class="note">18 países · 288 clubes · ligas fictícias<br>
-      Copas, Mundial de Clubes, seleções, patrocínios e finanças.<br>
+    <p class="note">${COUNTRIES.length} países · ${divisionCount} divisões · ${clubCount} clubes<br>
+      Acessos e quedas, Libertadores/Champions, copas de seleções, prêmios individuais e finanças.<br>
       Sem anúncios e sem custo. Progresso salvo neste navegador.</p>
   </div></div>`;
 }
 
 function viewCreate() {
-  const options = COUNTRIES.map((c) => `<option value="${c.code}">${c.flag} ${c.name} — ${c.league}</option>`).join('');
+  const options = COUNTRIES.map((c) => `<option value="${c.code}">${c.flag} ${c.name} — ${c.divisions[0]} + ${c.divisions.length - 1} divisões</option>`).join('');
   const posOptions = Object.entries(POSITIONS).map(([key, p]) => {
     const desc = { GOL: 'Defender o gol', ZAG: 'Marcação central', LAT: 'Apoiar pelos lados', VOL: 'Proteção e saída', MEI: 'Criar jogadas', ATA: 'Fazer gols' }[key];
     return `<button class="pos-opt ${createPos === key ? 'sel' : ''}" data-pos="${key}">
@@ -233,7 +240,7 @@ function viewCreate() {
 
   return `<div class="center"><div class="card form">
     <h2 style="font-size:24px;margin-bottom:6px">Criar jogador</h2>
-    <p class="muted tiny" style="margin-bottom:22px">Você começa aos 17 anos em um clube pequeno do país escolhido.</p>
+    <p class="muted tiny" style="margin-bottom:22px">Você começa aos 17 anos em um clube pequeno, nas divisões de baixo do país escolhido. Suba de divisão e chegue à elite.</p>
 
     <div class="field">
       <label for="p-name">Nome do jogador</label>
@@ -447,6 +454,9 @@ function viewSeason() {
         ${esc(s.myClubName)} terminou em <b>${s.myPosition}º</b> lugar.
       </p>
       ${s.honours.length ? `<div style="margin-top:12px">${s.honours.map((h) => `<div class="badge gold" style="margin:3px 6px 3px 0">${esc(h)}</div>`).join('')}</div>` : ''}
+      ${s.finance.promoted ? `<p class="warn" style="color:var(--gold)">🎉 Acesso! ${esc(s.myClubName)} sobe para a ${esc(s.finance.division)}.</p>` : ''}
+      ${s.finance.relegated ? `<p class="warn">⚠ ${esc(s.myClubName)} cai para a ${esc(s.finance.division)}.</p>` : ''}
+      ${s.awards && s.awards.length ? `<div class="divider"></div><h3>Prêmios individuais</h3><div>${s.awards.map((a) => `<span class="badge gold" style="margin:3px 6px 3px 0">${a.icon} ${esc(a.name)} · ${E.formatMoney(a.bonus)}</span>`).join('')}</div>` : ''}
       <div class="divider"></div>
       <div class="stats-grid">
         <div class="stat"><b>${s.stats.apps}</b><small>Jogos</small></div>
@@ -466,6 +476,7 @@ function viewSeason() {
       <div class="card"><h3>Campanhas nas copas</h3><ul>${comps || '<li class="muted tiny">Sem competições.</li>'}</ul></div>
       <div class="card">
         <h3>${esc(f.clubName)} · balanço</h3>
+        <div class="kv"><span>Divisão na próxima temporada</span><b>${esc(f.division || '—')}</b></div>
         ${f.sponsor.brand === 'Sem patrocinador'
           ? '<p class="warn">O clube terminou sem patrocinador.</p>'
           : `<div class="kv"><span>Patrocínio</span><b>${esc(f.sponsor.brand)} · ${E.formatMoney(f.sponsor.value)}/ano</b></div>`}
@@ -496,6 +507,9 @@ function viewGameOver() {
       <span class="r">${h.position}º · ${h.apps}J ${h.goals}⚽ ${h.assists}A · ${h.rating.toFixed(1)}</span>
     </li>`).join('');
   const honours = p.honours.length ? p.honours.map((h) => `<div class="badge gold" style="margin:3px 6px 3px 0">${esc(h)}</div>`).join('') : '<p class="muted tiny">Nenhum título conquistado.</p>';
+  const awards = (p.awards || []).length
+    ? (p.awards || []).map((a) => `<div class="badge gold" style="margin:3px 6px 3px 0">${a.icon || '🏅'} ${esc(a.name)} ${a.year}</div>`).join('')
+    : '<p class="muted tiny">Nenhum prêmio individual.</p>';
 
   return `<div class="shell" style="max-width:820px">
     <div class="card">
@@ -510,9 +524,13 @@ function viewGameOver() {
         <div class="stat"><b>${totalRating}</b><small>Nota média</small></div>
       </div>
       <div class="kv" style="margin-top:12px"><span>Pela seleção</span><b>${p.national.caps} jogos · ${p.national.goals} gols</b></div>
+      <div class="kv"><span>Patrimônio</span><b>${E.formatMoney(p.bank || 0)}</b></div>
       <div class="divider"></div>
       <h3>Conquistas</h3>
       ${honours}
+      <div class="divider"></div>
+      <h3>Prêmios individuais</h3>
+      ${awards}
       <div class="divider"></div>
       <h3>Trajetória</h3>
       <ul style="max-height:300px;overflow:auto">${history || '<li class="muted tiny">Sem temporadas registradas.</li>'}</ul>
