@@ -63,6 +63,7 @@ function playerCard() {
       </div>
     </div>
     <div class="overall"><b>${ov}</b><span>geral · ${p.positionName}</span></div>
+    <div class="kv"><span>Camisa</span><span class="row" style="gap:6px"><b>#${p.number || 10}</b><input class="input number-input" type="number" min="1" max="99" value="${p.number || 10}" data-number aria-label="Número da camisa"></span></div>
     ${attrs}
     <div class="divider"></div>
     ${attrBar('Forma', p.form, 'blue')}
@@ -75,6 +76,8 @@ function playerCard() {
     <div class="kv"><span>Reputação</span><b>${E.managerReputationLabel(p.reputation)}</b></div>
     <div class="kv"><span>Patrimônio</span><b>${E.formatMoney(p.bank || 0)}</b></div>
     <div class="kv"><span>Papel no elenco</span><b>${E.ROLE_LABEL[role]}</b></div>
+    <div class="kv"><span>Cartões</span><b>${p.yellowCount || 0} amarelos · ${p.reds || 0} vermelhos</b></div>
+    ${(p.suspensions || 0) > 0 ? `<div class="kv"><span>Suspensão</span><b style="color:var(--red)">${p.suspensions} jogo(s)</b></div>` : ''}
     ${(p.stigma || 0) > 0 ? `<p class="warn">⚠ Reputação manchada pela falência do clube anterior (${p.stigma}/5). Clubes grandes evitam você e a seleção fecha as portas — recupere com boas temporadas.</p>` : ''}
     ${(p.awards || []).length ? `<div class="divider"></div><h3>Prêmios individuais</h3><div>${p.awards.slice(-8).map((a) => `<span class="badge gold" style="margin:3px 6px 3px 0">${a.icon || '🏅'} ${esc(a.name)} ${a.year}</span>`).join('')}</div>` : ''}
     ${p.injuryWeeks > 0 ? `<div class="kv"><span>Lesão</span><b style="color:var(--red)">fora por ${p.injuryWeeks} sem.</b></div>` : ''}
@@ -134,6 +137,7 @@ function financeCard() {
 function competitionsCard() {
   const list = E.competitionsInfo(career);
   if (!list.length) return '';
+  const zone = E.leagueZoneInfo(career);
   const rows = list.map((c) => {
     const cls = c.status === 'Campeão' ? 'gold' : c.status === 'Em disputa' ? '' : 'gray';
     const stage = c.status === 'Em disputa' ? `<br><span class="muted tiny">${esc(c.stage)}</span>` : '';
@@ -142,7 +146,52 @@ function competitionsCard() {
       <span class="r"><span class="badge ${cls}">${esc(c.status)}</span>${stage}</span>
     </li>`;
   }).join('');
-  return `<div class="card"><h3>Competições ${career.season.year}</h3><ul>${rows}</ul></div>`;
+  const rules = [];
+  if (zone.continental) {
+    rules.push(`Terminar entre os ${zone.continental} primeiros da ${esc(zone.division)} garante vaga na ${esc(zone.continentalCup)} da temporada seguinte — as vagas saem da classificação da temporada anterior.`);
+  }
+  if (zone.promotion) rules.push(`Os ${zone.promotion} primeiros sobem para a divisão de cima.`);
+  if (zone.relegation) rules.push(`Os ${zone.relegation} últimos caem de divisão.`);
+  if (zone.cupName) rules.push(`A ${esc(zone.cupName)} é mata-mata com clubes de todas as divisões: quem perde está fora.`);
+  return `<div class="card"><h3>Competições ${career.season.year}</h3><ul>${rows}</ul>
+    ${rules.length ? `<div class="divider"></div><p class="muted tiny" style="line-height:1.65">${rules.join(' ')}</p>` : ''}
+  </div>`;
+}
+
+function midWindowCard() {
+  const win = career.midWindow;
+  if (!win || win.closed) return '';
+  const offers = win.offers.map((o) => offerRow(o, 'mid')).join('');
+  return `<div class="card window-card">
+    <div class="row between wrap" style="margin-bottom:8px">
+      <h3 style="margin:0">🪟 Janela do meio da temporada</h3>
+      <span class="badge gold">rodada ${win.round}</span>
+    </div>
+    <p class="muted tiny" style="margin-bottom:10px">Aceitar agora é um pré-contrato: você termina esta temporada no clube atual e se apresenta ao novo na próxima.</p>
+    ${offers || '<p class="muted tiny">Nenhuma proposta restante. Você segue no clube atual.</p>'}
+    <div class="row" style="margin-top:10px"><button class="btn small ghost" data-action="mid-close">Fechar janela</button></div>
+  </div>`;
+}
+
+function offerRow(o, where) {
+  const sponsorLine = o.sponsorNote || (o.sponsor && o.sponsor.brand !== 'Sem patrocinador'
+    ? `Patrocínio: ${o.sponsor.brand} (${E.formatMoney(o.sponsor.value)}/ano)`
+    : 'Sem patrocinador');
+  return `<div class="offer">
+      <span class="crest">${o.stars}★</span>
+      <span>
+        <span class="nm">${esc(o.clubName)} ${o.stay ? '<span class="badge">renovar</span>' : ''} ${o.preContract ? '<span class="badge gold">pré-contrato</span>' : ''} ${o.inDebt ? '<span class="badge red">dívidas</span>' : ''}</span>
+        <span class="dt">${o.flag || ''} ${esc(o.leagueName)} · ${esc(o.countryName)} · força ${o.strength} · ${E.ROLE_LABEL[o.role] || ''}</span>
+        <span class="dt">${esc(sponsorLine)}</span>
+        ${o.debtNote ? `<span class="dt">${esc(o.debtNote)}</span>` : ''}
+        <span class="offer-actions">
+          <button class="btn small primary" data-offer="${o.clubId}" data-where="${where}">${where === 'mid' ? 'Assinar pré-contrato' : 'Aceitar oferta'}</button>
+          <button class="btn small" data-negotiate="${o.clubId}" data-where="${where}" ${o.improved ? 'disabled' : ''}>${o.improved ? 'Melhoria pedida' : 'Pedir melhoria'}</button>
+          ${o.stay ? '' : `<button class="btn small danger" data-refuse="${o.clubId}" data-where="${where}">Recusar</button>`}
+        </span>
+      </span>
+      <span class="dt" style="text-align:right">${E.formatMoney(o.wage)}/mês<br>${o.years} temporadas</span>
+    </div>`;
 }
 
 function newsCard() {
@@ -157,23 +206,35 @@ function newsCard() {
 function standingsCard() {
   const rows = E.standings(career);
   const myId = career.player.clubId;
+  const zone = E.leagueZoneInfo(career);
+  const total = rows.length;
   const body = rows.map((r, i) => {
     const club = career.clubs[r.clubId];
-    const me = r.clubId === myId;
-    return `<tr class="${me ? 'me' : ''}">
-      <td class="pos">${i + 1}</td>
+    const pos = i + 1;
+    const cls = [];
+    if (r.clubId === myId) cls.push('me');
+    if (zone.continental && pos <= zone.continental) cls.push('z-cc');
+    if (zone.promotion && pos <= zone.promotion) cls.push('z-up');
+    if (zone.relegation && pos > total - zone.relegation) cls.push('z-down');
+    return `<tr class="${cls.join(' ')}">
+      <td class="pos">${pos}</td>
       <td title="${esc(club.name)}">${esc(club.name)}</td>
       <td>${r.p}</td>
       <td>${r.gf - r.ga > 0 ? '+' : ''}${r.gf - r.ga}</td>
       <td><b>${r.pts}</b></td>
     </tr>`;
   }).join('');
+  const legend = [];
+  if (zone.continental) legend.push(`<span><i class="dot blue"></i>${esc(zone.continentalCup)} · ${zone.continental} vagas</span>`);
+  if (zone.promotion) legend.push(`<span><i class="dot green"></i>Acesso · ${zone.promotion}</span>`);
+  if (zone.relegation) legend.push(`<span><i class="dot red"></i>Rebaixamento · ${zone.relegation}</span>`);
   return `<div class="card">
     <h3>${career.season.flag} ${esc(career.season.leagueName)}</h3>
     <table class="table">
       <thead><tr><th></th><th>Clube</th><th>J</th><th>SG</th><th>P</th></tr></thead>
       <tbody>${body}</tbody>
     </table>
+    ${legend.length ? `<div class="legend">${legend.join('')}</div>` : ''}
   </div>`;
 }
 
@@ -203,7 +264,27 @@ function trainingPicker() {
   return TRAININGS.map((t) => `<button class="training ${selectedTraining === t.id ? 'sel' : ''}" data-action="training" data-train="${t.id}">
       <b>${t.name}</b>
       <small>${t.desc}</small>
+      <em class="fit-delta ${t.fit > 0 ? 'up' : ''}">${t.fit > 0 ? '+' : ''}${t.fit} físico</em>
     </button>`).join('');
+}
+
+function trainingImpactBlock(trainingId) {
+  if (!career || !career.player) return '';
+  const t = E.trainingImpact(career, trainingId);
+  const riskLabel = (r) => (r < 0.035 ? 'baixo' : r < 0.07 ? 'médio' : 'alto');
+  const color = (r) => (r < 0.035 ? 'var(--accent)' : r < 0.07 ? 'var(--gold)' : 'var(--red)');
+  const pctTxt = (r) => `${(r * 100).toFixed(1).replace('.', ',')}%`;
+  let note;
+  if (t.suspended) note = `Suspenso: você não joga a próxima partida (${t.suspensions} jogo(s)).`;
+  else if (t.injured) note = `Lesionado por ${t.injuryWeeks} semana(s): a Recuperação também diminui 1 semana de lesão.`;
+  else if (t.recovery) note = 'Recuperação devolve 24 de físico e reduz 1 semana de lesão. Físico alto significa mais minutos e menos risco. O painel já inclui +4 de descanso semanal.';
+  else note = 'Treinar forte gasta físico: com o físico baixo você joga menos minutos e a chance de lesão sobe. O painel já inclui +4 de descanso semanal.';
+  return `<div class="impact-grid">
+      <div><small>Físico</small><b>${t.fitness}% → ${t.after}%</b></div>
+      <div><small>Minutos previstos</small><b>${t.minutes} min</b></div>
+      <div><small>Risco de lesão</small><b style="color:${color(t.riskAfter)}">${pctTxt(t.riskAfter)} · ${riskLabel(t.riskAfter)}</b></div>
+    </div>
+    <p class="muted tiny" style="margin-top:8px">${note} Risco agora: ${pctTxt(t.riskNow)}.</p>`;
 }
 
 /* ------------------------------------------------------------------ */
@@ -290,9 +371,9 @@ function viewHub() {
     const myRole = isNational ? E.nationalInfo(career).status : role;
     matchBlock = `<div class="comp-line">${ev.compIcon ? `${ev.compIcon} ` : ''}${esc(ev.compName || '')} · ${esc(ev.stage || '')}</div>
       ${eventBlock(ev)}
-      <div class="row between wrap" style="margin-bottom:6px">
+                <div class="row between wrap" style="margin-bottom:6px">
         <span class="badge gray">Seu papel: ${myRole ? E.ROLE_LABEL[myRole] : '—'}</span>
-        <span class="chip ${p.injuryWeeks > 0 ? 'on' : ''}">${p.injuryWeeks > 0 ? `Lesionado (${p.injuryWeeks} sem.)` : `Físico ${Math.round(p.fitness)}%`}</span>
+        <span class="chip ${p.injuryWeeks > 0 || (p.suspensions || 0) > 0 ? 'on' : ''}">${p.injuryWeeks > 0 ? `Lesionado (${p.injuryWeeks} sem.)` : (p.suspensions || 0) > 0 ? `Suspenso (${p.suspensions} jogo[s])` : `Físico ${Math.round(p.fitness)}%`}</span>
       </div>`;
   } else {
     matchBlock = '<p class="muted">Temporada encerrada.</p>';
@@ -326,11 +407,13 @@ function viewHub() {
           <div class="divider"></div>
           <h3>Treino da semana</h3>
           <div class="trainings">${trainingPicker()}</div>
+          <div class="impact" id="training-impact">${trainingImpactBlock(selectedTraining)}</div>
           <div class="row" style="margin-top:16px">
             <button class="btn primary grow" data-action="play" ${ev ? '' : 'disabled'}>${playLabel}</button>
           </div>
           <p class="muted tiny" style="margin-top:10px">Durante a partida você só assiste. As decisões são suas: treino, clube e carreira.</p>
         </div>
+        ${midWindowCard()}
         <div class="card">
           <h3>Últimos jogos</h3>
           <ul>${lastResults()}</ul>
@@ -376,7 +459,18 @@ function viewMatch() {
         <li class="feed-item"><span class="min">0'</span><span>Transmissão iniciada. Você está em campo como ${esc(d.playerName)}.</span></li>
       </ul>
     </div>
-    <p class="muted tiny" style="margin-top:12px;text-align:center">Você não interfere na partida — só assiste.</p>
+    <p class="muted tiny" style="margin-top:12px;text-align:center">Você não interfere na partida — só assiste, decide os treinos e cobra os pênaltis.</p>
+    <div class="penalty-overlay" id="penalty-overlay" hidden>
+      <div class="penalty-box">
+        <h3 style="color:var(--gold)">🎯 Pênalti para o seu time</h3>
+        <p class="muted tiny" style="margin:8px 0 0">Escolha onde colocar a bola: quatro cantos ou o meio. O goleiro escolhe um dos cinco lugares e, se acertar o seu, defende.</p>
+        <div class="penalty-goal" id="penalty-zones">
+          ${[0, 1, 2, 3, 4].map((z) => `<button class="zone-btn" data-zone="${z}"><span>${['↖', '↗', '●', '↙', '↘'][z]}</span><small>${esc(E.PENALTY_ZONES[z].replace('Canto ', '').replace(' da baliza', ''))}</small></button>`).join('')}
+        </div>
+        <p id="penalty-result" class="muted tiny" style="min-height:20px"></p>
+        <button class="btn primary small" data-action="penalty-next" id="penalty-next" hidden>Continuar ▶</button>
+      </div>
+    </div>
   </div>`;
 }
 
@@ -413,8 +507,9 @@ function viewResult() {
         <div class="stat"><b>${d.assists}</b><small>Assist.</small></div>
         <div class="stat"><b>${d.rating.toFixed(1)}</b><small>Nota</small></div>
       </div>
-      ${d.minutes === 0 ? '<p class="muted tiny" style="margin-top:12px">Você não entrou em campo nesta partida.</p>' : ''}
+      ${d.minutes === 0 ? `<p class="muted tiny" style="margin-top:12px">${d.suspended ? 'Você cumpriu suspensão e ficou de fora desta partida.' : 'Você não entrou em campo nesta partida.'}</p>` : ''}
       ${d.injured ? `<p style="margin-top:12px;color:var(--red);font-size:13px">Você sofreu uma lesão e ficará fora por ${d.injuryWeeks} semana(s).</p>` : ''}
+      ${d.red ? '<p style="margin-top:12px;color:var(--red);font-size:13px">🟥 Você foi expulso e vai cumprir suspensão.</p>' : ''}
       <div class="divider"></div>
       <h3>O que aconteceu</h3>
       <ul style="max-height:260px;overflow:auto">${list}</ul>
@@ -427,15 +522,7 @@ function viewResult() {
 
 function viewSeason() {
   const s = pendingSummary;
-  const offers = career.offers.map((o) => `<button class="offer" data-offer="${o.clubId}">
-      <span class="crest">${o.stars}★</span>
-      <span>
-        <span class="nm">${esc(o.clubName)} ${o.stay ? '<span class="badge">renovar</span>' : ''} ${o.inDebt ? '<span class="badge red">dívidas</span>' : ''}</span>
-        <span class="dt">${o.flag} ${esc(o.leagueName)} · ${esc(o.countryName)} · força ${o.strength} · ${E.ROLE_LABEL[o.role]}</span>
-        <span class="dt">${o.sponsor && o.sponsor.brand !== 'Sem patrocinador' ? `Patrocínio: ${esc(o.sponsor.brand)} (${E.formatMoney(o.sponsor.value)}/ano)` : 'Sem patrocinador'}</span>
-      </span>
-      <span class="dt" style="text-align:right">${E.formatMoney(o.wage)}/mês<br>${o.years} temporadas</span>
-    </button>`).join('');
+  const offers = career.offers.map((o) => offerRow(o, 'end')).join('');
 
   const top = s.tableTop.map((r, i) => `<li class="list-item"><span><span class="muted tiny">${i + 1}.</span> ${esc(r.name)} ${r.me ? '<span class="badge">você</span>' : ''}</span><span class="r">${r.pts} pts</span></li>`).join('');
   const scorers = s.topScorers.map((sc, i) => `<li class="list-item"><span><span class="muted tiny">${i + 1}.</span> ${esc(sc.name)} ${sc.isPlayer ? '<span class="badge">você</span>' : ''}</span><span class="r">${sc.goals} gols</span></li>`).join('');
@@ -563,8 +650,76 @@ function flashGoal() {
   setTimeout(() => div.remove(), 900);
 }
 
+let liveBase = { home: 0, away: 0 };
+let liveBonus = { home: 0, away: 0 };
+let viewerDone = false;
+
+function renderLiveScore() {
+  const el = document.getElementById('m-score');
+  if (!el) return;
+  el.textContent = `${liveBase.home + liveBonus.home} – ${liveBase.away + liveBonus.away}`;
+}
+
+function showPenaltyOverlay() {
+  const pen = pendingDetail && E.pendingPenalty(pendingDetail);
+  if (!pen) return;
+  const overlay = document.getElementById('penalty-overlay');
+  if (!overlay) return;
+  if (viewer && viewer.isRunning()) viewer.togglePause();
+  const box = document.getElementById('penalty-zones');
+  if (box) {
+    box.classList.remove('done');
+    box.querySelectorAll('button').forEach((b) => b.classList.remove('picked', 'keeper'));
+  }
+  const out = document.getElementById('penalty-result');
+  if (out) out.textContent = `Minuto ${pen.minute}. Escolha onde colocar a bola.`;
+  const next = document.getElementById('penalty-next');
+  if (next) next.hidden = true;
+  const cont = document.getElementById('match-continue');
+  if (cont) cont.hidden = true;
+  overlay.hidden = false;
+}
+
+function takePenalty(zone) {
+  if (!career || !pendingDetail) return;
+  const res = E.resolvePenalty(career, pendingDetail, zone);
+  if (!res) return;
+  const box = document.getElementById('penalty-zones');
+  if (box) {
+    box.classList.add('done');
+    box.querySelectorAll('[data-zone]').forEach((b) => {
+      const z = Number(b.dataset.zone);
+      if (z === res.zone) b.classList.add('picked');
+      if (z === res.keeperZone) b.classList.add('keeper');
+    });
+  }
+  const out = document.getElementById('penalty-result');
+  if (out) {
+    out.innerHTML = res.saved
+      ? `🧤 O goleiro foi no ${esc(res.keeperLabel.toLowerCase())} e defendeu! Sua nota: ${pendingDetail.rating.toFixed(1)}.`
+      : `⚽ GOL! Você foi no ${esc(res.label.toLowerCase())}; o goleiro escolheu ${esc(res.keeperLabel.toLowerCase())}. Placar: ${pendingDetail.hs}–${pendingDetail.as}.`;
+  }
+  const side = pendingDetail.playerHome ? 'home' : 'away';
+  if (!res.saved) liveBonus[side] += 1;
+  renderLiveScore();
+  addFeed({
+    minute: res.minute,
+    type: res.saved ? 'chance' : 'goal',
+    text: res.saved
+      ? `🧤 ${career.player.name} cobrou no ${res.label.toLowerCase()}, mas o goleiro defendeu!`
+      : `⚽ GOL! ${career.player.name} cobrou no ${res.label.toLowerCase()} e o goleiro não chegou.`,
+  });
+  if (!res.saved) flashGoal();
+  const next = document.getElementById('penalty-next');
+  if (next) next.hidden = false;
+  save();
+}
+
 function startViewer() {
   const d = pendingDetail;
+  liveBase = { home: 0, away: 0 };
+  liveBonus = { home: 0, away: 0 };
+  viewerDone = false;
   viewer = createViewer(document.getElementById('pitch'), {
     formationHome: d.formationHome,
     formationAway: d.formationAway,
@@ -575,14 +730,21 @@ function startViewer() {
     onClock: (m) => {
       const el = document.getElementById('m-clock');
       if (el) el.textContent = m >= 90 ? '90\' · fim' : `${m}'`;
+      const pen = E.pendingPenalty(pendingDetail);
+      if (pen && m >= pen.minute && !pen.prompted) {
+        pen.prompted = true;
+        showPenaltyOverlay();
+      }
     },
     onScore: (home, away) => {
-      const el = document.getElementById('m-score');
-      if (el) el.textContent = `${home} – ${away}`;
+      liveBase = { home, away };
+      renderLiveScore();
     },
     onEvent: (ev) => addFeed(ev),
     onGoal: () => flashGoal(),
     onFinish: () => {
+      viewerDone = true;
+      if (E.pendingPenalty(pendingDetail)) { showPenaltyOverlay(); return; }
       const btn = document.getElementById('match-continue');
       if (btn) btn.hidden = false;
     },
@@ -665,8 +827,37 @@ app.addEventListener('click', (e) => {
     return;
   }
 
+  const zoneBtn = e.target.closest('[data-zone]');
+  if (zoneBtn) { takePenalty(Number(zoneBtn.dataset.zone)); return; }
+
   const offerBtn = e.target.closest('[data-offer]');
-  if (offerBtn) { takeOffer(Number(offerBtn.dataset.offer)); return; }
+  if (offerBtn) {
+    const clubId = Number(offerBtn.dataset.offer);
+    if (offerBtn.dataset.where === 'mid') {
+      E.signPreContract(career, clubId);
+      save();
+      render();
+    } else {
+      takeOffer(clubId);
+    }
+    return;
+  }
+
+  const negBtn = e.target.closest('[data-negotiate]');
+  if (negBtn) {
+    E.negotiateOffer(career, Number(negBtn.dataset.negotiate), negBtn.dataset.where || 'end');
+    save();
+    render();
+    return;
+  }
+
+  const refBtn = e.target.closest('[data-refuse]');
+  if (refBtn) {
+    E.refuseOffer(career, Number(refBtn.dataset.refuse), refBtn.dataset.where || 'end');
+    save();
+    render();
+    return;
+  }
 
   const btn = e.target.closest('[data-action]');
   if (!btn) return;
@@ -690,16 +881,20 @@ app.addEventListener('click', (e) => {
       break;
     }
     case 'menu':
+      if (pendingDetail) { E.finalizeMatch(career, pendingDetail); pendingDetail = null; save(); }
       screen = 'menu';
       render();
       break;
     case 'start':
       startNewCareer();
       break;
-    case 'training':
+    case 'training': {
       selectedTraining = btn.dataset.train;
       document.querySelectorAll('.training').forEach((el) => el.classList.toggle('sel', el.dataset.train === selectedTraining));
+      const box = document.getElementById('training-impact');
+      if (box) box.innerHTML = trainingImpactBlock(selectedTraining);
       break;
+    }
     case 'play':
       if (career && E.seasonOver(career)) { enterCareer(); render(); return; }
       playRound();
@@ -720,7 +915,26 @@ app.addEventListener('click', (e) => {
       if (viewer) viewer.skip();
       break;
     case 'match-continue':
+      if (pendingDetail) E.finalizeMatch(career, pendingDetail);
+      save();
       screen = 'result';
+      render();
+      break;
+    case 'penalty-next': {
+      const overlay = document.getElementById('penalty-overlay');
+      if (overlay) overlay.hidden = true;
+      if (E.pendingPenalty(pendingDetail)) { showPenaltyOverlay(); break; }
+      if (viewerDone) {
+        const cont = document.getElementById('match-continue');
+        if (cont) cont.hidden = false;
+      } else if (viewer && !viewer.isRunning()) {
+        viewer.togglePause();
+      }
+      break;
+    }
+    case 'mid-close':
+      E.closeMidWindow(career);
+      save();
       render();
       break;
     case 'result-continue':
@@ -736,6 +950,15 @@ app.addEventListener('click', (e) => {
     default:
       break;
   }
+});
+
+app.addEventListener('change', (e) => {
+  const num = e.target.closest('[data-number]');
+  if (!num || !career) return;
+  const value = Math.max(1, Math.min(99, Number(num.value) || 10));
+  career.player.number = value;
+  save();
+  render();
 });
 
 render();

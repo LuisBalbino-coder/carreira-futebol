@@ -270,6 +270,28 @@ export const CONTINENTAL_CUPS = {
   OFC: { name: 'Liga dos Campeões da Oceania', icon: '🏆' },
 };
 
+// Copas nacionais mata-mata (uma por país, com clubes de todas as divisões).
+export const DOMESTIC_CUPS = {
+  BRA: 'Copa do Brasil',
+  ARG: 'Copa Argentina',
+  ENG: 'FA Cup',
+  ESP: 'Copa del Rey',
+  ITA: 'Coppa Italia',
+  GER: 'DFB-Pokal',
+  FRA: 'Coupe de France',
+  POR: 'Taça de Portugal',
+  NED: 'KNVB Beker',
+  MEX: 'Copa MX',
+  USA: 'US Open Cup',
+  JPN: 'Copa do Imperador',
+  TUR: 'Copa da Turquia',
+  NGA: 'Copa da Nigéria',
+  EGY: 'Copa do Egito',
+  MAR: 'Copa do Trono',
+  SEN: 'Copa do Senegal',
+  RSA: 'Nedbank Cup',
+};
+
 export const CONFEDERATIONS = {
   CONMEBOL: { name: 'América do Sul', cup: 'Copa América', short: 'CONMEBOL' },
   UEFA: { name: 'Europa', cup: 'Eurocopa', short: 'UEFA' },

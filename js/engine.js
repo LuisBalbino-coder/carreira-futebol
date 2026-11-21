@@ -4,7 +4,7 @@
 
 import {
   COUNTRY_BY_CODE, COUNTRIES, POSITIONS, ATTRS, BASE_ATTRS, TRAININGS,
-  FORMATIONS, FORMATION_KEYS, BRANDS,
+  FORMATIONS, FORMATION_KEYS, BRANDS, CONTINENTAL_CUPS, DOMESTIC_CUPS, SPONSOR_TIER_LABEL,
 } from './data.js';
 import {
   clamp, rnd, ri, pick, hash, seededRng, poisson, expectedGoals, shuffle,
@@ -265,11 +265,15 @@ export function createCareer({ name, countryCode, position, seed }) {
     countryName: country.name,
     position,
     positionName: (POSITIONS[position] || POSITIONS.MEI).name,
+    number: ({ GOL: 1, ZAG: 4, LAT: 2, VOL: 5, MEI: 10, ATA: 9 }[position] || 10),
     age: 17,
     attrs: startingAttrs(position),
     potential: ri(78, 93),
     reputation: 6,
     stigma: 0,
+    yellowCount: 0,
+    suspensions: 0,
+    reds: 0,
     bank: 0,
     form: 62,
     morale: 72,
@@ -304,22 +308,12 @@ export function createCareer({ name, countryCode, position, seed }) {
 
   C.ensureNations(career);
 
-  // Clube inicial: divisões de baixo, com espaço para o jogador ser titular.
+  // Clube inicial: totalmente aleatório na última divisão do país escolhido.
   const ov = overall(player);
   const countryLeagues = world.leagues.filter((l) => l.countryCode === country.code);
-  const lower = countryLeagues.filter((l) => l.tier > 0);
-  const startPool = (lower.length ? lower : countryLeagues).flatMap((l) => l.clubIds);
-  const evaluated = startPool.map((id) => {
-    const club = world.clubs[id];
-    const squad = squadFor(career, club.id);
-    const rivals = squad.filter((s) => s.position === player.position).map((s) => s.rating);
-    return { club, best: rivals.length ? Math.max(...rivals) : 60 };
-  });
-  const startable = evaluated.filter((x) => ov >= x.best - 6).sort((a, b) => b.club.strength - a.club.strength);
-  const startClub = startable.length
-    ? startable[Math.min(startable.length - 1, ri(0, 2))].club
-    : evaluated.sort((a, b) => a.club.strength - b.club.strength)[0].club;
-  const startLeague = world.leagues.find((l) => l.id === startClub.leagueId);
+  const lastTier = countryLeagues.reduce((max, l) => Math.max(max, l.tier || 0), 0);
+  const startLeague = countryLeagues.find((l) => (l.tier || 0) === lastTier) || countryLeagues[0];
+  const startClub = world.clubs[pick(startLeague.clubIds)];
 
   player.clubId = startClub.id;
   player.contract = { wage: wageFor(startClub, ov), years: 2 };
@@ -394,6 +388,44 @@ export function squadRole(career) {
 
 export const ROLE_LABEL = { titular: 'Titular', rotacao: 'Rotação', reserva: 'Reserva' };
 
+/** Risco de lesão sobe com o cansaço e com os minutos em campo. */
+export function injuryChance(player, minutes = 70) {
+  const fitness = player.fitness != null ? player.fitness : 100;
+  const fatigue = clamp((100 - fitness) / 100, 0, 1);
+  const load = clamp(minutes / 90, 0, 1);
+  return clamp(0.012 + fatigue * 0.075 + load * 0.02, 0.005, 0.14);
+}
+
+/** Minutos esperados na próxima partida, dado o físico e o papel no elenco. */
+export function minutesForecast(career) {
+  const p = career.player;
+  if ((p.suspensions || 0) > 0 || p.injuryWeeks > 0 || p.fitness <= 32) return 0;
+  const role = squadRole(career);
+  const base = role === 'titular' ? 88 : role === 'rotacao' ? 64 : (p.age <= 19 ? 30 : 20);
+  return clamp(base, 0, 90);
+}
+
+/** Impacto do treino escolhido: físico, minutos previstos e risco de lesão. */
+export function trainingImpact(career, trainingId) {
+  const p = career.player;
+  const t = TRAININGS.find((x) => x.id === trainingId) || TRAININGS[0];
+  const after = clamp(p.fitness + (t.fit || 0) + 4, 0, 100);
+  const minutes = minutesForecast(career);
+  return {
+    fitness: Math.round(p.fitness),
+    after: Math.round(after),
+    fitnessDelta: t.fit || 0,
+    minutes,
+    riskNow: injuryChance(p, minutes),
+    riskAfter: injuryChance({ fitness: after }, minutes),
+    injured: p.injuryWeeks > 0,
+    injuryWeeks: p.injuryWeeks,
+    suspended: (p.suspensions || 0) > 0,
+    suspensions: p.suspensions || 0,
+    recovery: t.id === 'recuperacao',
+  };
+}
+
 /* ------------------------------------------------------------------ */
 /* Tabela / artilharia                                                 */
 /* ------------------------------------------------------------------ */
@@ -421,6 +453,27 @@ export function standings(career) {
   return [...rows.values()].sort(
     (x, y) => y.pts - x.pts || (y.gf - y.ga) - (x.gf - x.ga) || y.gf - x.gf,
   );
+}
+
+/** Zonas da tabela: vaga continental, acesso e rebaixamento. */
+export function leagueZoneInfo(career, leagueId) {
+  const league = career.leagues.find((l) => l.id === (leagueId || (career.season && career.season.leagueId)));
+  if (!league) return { division: '', tier: 0, continental: 0, continentalCup: null, continentalIcon: null, promotion: 0, relegation: 0, cupName: null };
+  const tier = league.tier || 0;
+  const countryLeagues = career.leagues.filter((l) => l.countryCode === league.countryCode);
+  const hasBelow = countryLeagues.some((l) => (l.tier || 0) > tier);
+  const confed = (COUNTRY_BY_CODE[league.countryCode] || {}).confed;
+  const cup = CONTINENTAL_CUPS[confed] || null;
+  return {
+    division: league.name,
+    tier,
+    continental: tier === 0 && cup ? C.continentalSpots(career, confed) : 0,
+    continentalCup: tier === 0 && cup ? cup.name : null,
+    continentalIcon: tier === 0 && cup ? cup.icon : null,
+    promotion: tier > 0 ? 2 : 0,
+    relegation: hasBelow ? 2 : 0,
+    cupName: DOMESTIC_CUPS[league.countryCode] || 'Copa Nacional',
+  };
 }
 
 export function topScorers(career) {
@@ -482,8 +535,9 @@ function simulateMatch(career, opts) {
   const hasPlayer = playerHome || playerAway;
   const role = hasPlayer ? roleFor(career, national) : null;
 
+  const suspended = hasPlayer && !national && (p.suspensions || 0) > 0;
   let minutes = 0;
-  if (hasPlayer && p.injuryWeeks <= 0 && p.fitness > 32) {
+  if (hasPlayer && !suspended && p.injuryWeeks <= 0 && p.fitness > 32) {
     const base = role === 'titular' ? 88 : role === 'rotacao' ? 64 : (p.age <= 19 ? 30 : 20);
     minutes = clamp(Math.round(base + rnd(-8, 8)), 0, 90);
     if (minutes < 25 && Math.random() < 0.45) minutes = 0;
@@ -498,6 +552,25 @@ function simulateMatch(career, opts) {
 
   let hs = poisson(expectedGoals(hStr + adv, aStr));
   let as = poisson(expectedGoals(aStr, hStr + adv));
+
+  // Pênaltis marcados no jogo: um para cada lado, se a sorte ajudar.
+  const penalties = [];
+  if (hasPlayer && minutes > 0) {
+    if (Math.random() < 0.17) {
+      const interactive = !!opts.interactivePenalties && p.position !== 'GOL';
+      const pen = { minute: ri(6, 88), side: playerHome ? 'home' : 'away', interactive, scored: null, zone: null, keeperZone: null };
+      if (!interactive) {
+        pen.scored = Math.random() < 0.78;
+        if (pen.scored) { if (playerHome) hs++; else as++; }
+      }
+      penalties.push(pen);
+    }
+    if (Math.random() < 0.12) {
+      const pen = { minute: ri(6, 88), side: playerHome ? 'away' : 'home', interactive: false, scored: Math.random() < 0.79, zone: null, keeperZone: null };
+      if (pen.scored) { if (playerHome) as++; else hs++; }
+      penalties.push(pen);
+    }
+  }
 
   const myGoals = playerHome ? hs : as;
   const oppGoals = playerHome ? as : hs;
@@ -516,7 +589,7 @@ function simulateMatch(career, opts) {
     else slots.push(null);
   }
 
-  const rating = Math.round(clamp(
+  let rating = Math.round(clamp(
     6.15 + pGoals * 0.9 + pAssists * 0.55 +
     (ov - (playerHome ? opts.awayStr : opts.homeStr)) * 0.015 +
     (myGoals - oppGoals) * 0.12 + rnd(-0.55, 0.55),
@@ -588,6 +661,45 @@ function simulateMatch(career, opts) {
       text: `Cartão amarelo para o ${who}.`,
     });
   }
+  // Faltas e cartões do jogador: dois amarelos ou um vermelho direto.
+  let yellows = 0;
+  let sentOff = null;
+  let totalFouls = 0;
+  if (hasPlayer && minutes > 0) {
+    const foulRate = { ZAG: 0.55, VOL: 0.6, LAT: 0.45, MEI: 0.3, ATA: 0.22, GOL: 0.05 }[p.position] || 0.3;
+    totalFouls = Math.random() < foulRate ? ri(1, 2) : 0;
+    for (let i = 0; i < totalFouls; i++) {
+      events.push({ minute: ri(5, 88), type: 'foul', side: playerHome ? 'home' : 'away', text: `Falta de ${p.name}; o árbitro marca.` });
+    }
+    if (Math.random() < 0.16) yellows = 1;
+    if (Math.random() < 0.012) {
+      sentOff = { minute: ri(25, 84), straight: yellows === 0 };
+      yellows = sentOff.straight ? 0 : 2;
+      minutes = Math.min(minutes, sentOff.minute);
+      rating = Math.max(4, Math.round((rating - 0.6) * 10) / 10);
+    }
+    if (yellows === 1) catalogYellow();
+    else if (yellows === 2) catalogYellow();
+  }
+  function catalogYellow() {
+    if (yellows === 2) {
+      events.push({ minute: sentOff ? sentOff.minute : ri(25, 80), type: 'card', side: playerHome ? 'home' : 'away', text: `🟨🟥 Segundo amarelo: ${p.name} está expulso!` });
+    } else {
+      events.push({ minute: ri(20, 80), type: 'card', side: playerHome ? 'home' : 'away', text: `🟨 Cartão amarelo para ${p.name}.` });
+    }
+  }
+  if (sentOff && sentOff.straight) {
+    events.push({ minute: sentOff.minute, type: 'card', side: playerHome ? 'home' : 'away', text: `🟥 Vermelho direto para ${p.name}!` });
+  }
+  for (const pen of penalties) {
+    const mySide = pen.side === (playerHome ? 'home' : 'away');
+    const teamName = pen.side === 'home' ? opts.homeName : opts.awayName;
+    let text;
+    if (mySide && pen.interactive) text = `🎯 Pênalti para o ${teamName}! ${p.name} vai cobrar.`;
+    else if (pen.scored) text = `🎯 Pênalti para o ${teamName}, convertido.`;
+    else text = `🎯 Pênalti para o ${teamName}, mas o goleiro defendeu.`;
+    events.push({ minute: pen.minute, type: 'penalty', side: pen.side, text });
+  }
   events.push({ minute: 45, type: 'info', side: 'none', text: 'Fim do primeiro tempo' });
   events.push({ minute: 90, type: 'info', side: 'none', text: 'Fim de jogo' });
   events.sort((a, b) => a.minute - b.minute);
@@ -625,6 +737,12 @@ function simulateMatch(career, opts) {
     playerName: p.name,
     playerPosition: p.position,
     minutes,
+    penalties,
+    yellows,
+    sentOff,
+    red: !!sentOff,
+    suspended,
+    fouls: totalFouls,
     goals: pGoals,
     assists: pAssists,
     rating,
@@ -688,6 +806,11 @@ function applyMatchOutcome(career, detail, bucket = 'league') {
 
   if (p.injuryWeeks > 0) p.injuryWeeks = Math.max(0, p.injuryWeeks - 1);
 
+  if (detail.suspended && (p.suspensions || 0) > 0) {
+    p.suspensions = Math.max(0, p.suspensions - 1);
+    news(career, `${p.name} cumpriu suspensão automática e está à disposição.`, 'info');
+  }
+
   if (detail.minutes > 0) {
     ps.apps++;
     ps.minutes += detail.minutes;
@@ -702,10 +825,24 @@ function applyMatchOutcome(career, detail, bucket = 'league') {
     p.morale = clamp(p.morale + (detail.win ? 4 : detail.draw ? 0 : -3) + (detail.rating - 6.4) * 2, 0, 100);
     p.form = clamp(p.form + (detail.rating - 6.4) * 3, 0, 100);
     detail.injured = false;
-    if (Math.random() < 0.035) {
+    if (Math.random() < injuryChance(p, detail.minutes)) {
       p.injuryWeeks = ri(1, 4);
       detail.injured = true;
       detail.injuryWeeks = p.injuryWeeks;
+    }
+    if (detail.yellows) {
+      p.yellowCount = (p.yellowCount || 0) + detail.yellows;
+      if (p.yellowCount >= 3) {
+        p.yellowCount -= 3;
+        p.suspensions = (p.suspensions || 0) + 1;
+        news(career, `${p.name} levou o terceiro amarelo e está suspenso por 1 jogo.`, 'bad');
+      }
+    }
+    if (detail.red) {
+      p.reds = (p.reds || 0) + 1;
+      const games = detail.sentOff && detail.sentOff.straight ? 2 : 1;
+      p.suspensions = (p.suspensions || 0) + games;
+      news(career, `🟥 ${p.name} foi expulso e pegou ${games} jogo(s) de suspensão.`, 'bad');
     }
   } else {
     p.fitness = clamp(p.fitness + 6, 0, 100);
@@ -750,7 +887,8 @@ function awardComp(career, comp, champion) {
   if (comp.kind === 'club') {
     const cashPrize = String(comp.id).startsWith('cc-') ? 9e6
       : String(comp.id).startsWith('scwc-') ? 20e6
-      : String(comp.id).startsWith('cwc-') ? 12e6 : 0;
+      : String(comp.id).startsWith('cwc-') ? 12e6
+      : String(comp.id).startsWith('dc-') ? 3.5e6 : 0;
     if (cashPrize > 0) {
       ensureFinance(career, career.clubs[p.clubId]).cash += cashPrize;
       news(career, `Premiação de ${formatMoney(cashPrize)} pela conquista do ${comp.name}.`, 'good');
@@ -781,9 +919,16 @@ function leagueRound(career, ev) {
         compName: season.leagueName,
         compIcon: season.flag,
         stage: `Rodada ${ev.round + 1}`,
+        interactivePenalties: true,
       });
-      season.results[`${ev.round}:${mi}`] = { hs: detail.hs, as: detail.as };
-      applyMatchOutcome(career, detail, 'league');
+      detail.resultKey = `${ev.round}:${mi}`;
+      if ((detail.penalties || []).some((pen) => pen.interactive && pen.scored == null)) {
+        // O resultado só é fechado depois que você cobra o pênalti.
+        detail.pendingOutcome = 'league';
+      } else {
+        season.results[detail.resultKey] = { hs: detail.hs, as: detail.as };
+        applyMatchOutcome(career, detail, 'league');
+      }
     } else {
       season.results[`${ev.round}:${mi}`] = quickSim(career, m).result;
     }
@@ -859,6 +1004,125 @@ function playFriendly(career, ev) {
   return detail;
 }
 
+export const PENALTY_ZONES = [
+  'Canto alto esquerdo',
+  'Canto alto direito',
+  'Meio da baliza',
+  'Canto baixo esquerdo',
+  'Canto baixo direito',
+];
+
+/** Próximo pênalti que depende da sua escolha, se houver. */
+export function pendingPenalty(detail) {
+  if (!detail || !detail.penalties) return null;
+  return detail.penalties.find((pen) => pen.interactive && pen.scored == null) || null;
+}
+
+/**
+ * Cobrança de pênalti: o goleiro escolhe um dos cinco lugares; se coincidir
+ * com o seu canto, ele defende. Atualiza placar, nota e estatísticas.
+ */
+export function resolvePenalty(career, detail, zone) {
+  const pen = pendingPenalty(detail);
+  if (!pen) return null;
+  const p = career.player;
+  const keeperZone = ri(0, 4);
+  const saved = keeperZone === zone;
+  pen.zone = zone;
+  pen.keeperZone = keeperZone;
+  pen.scored = !saved;
+  const label = PENALTY_ZONES[zone] || PENALTY_ZONES[2];
+  if (saved) {
+    detail.rating = Math.max(4, Math.round((detail.rating - 0.4) * 10) / 10);
+    detail.events.push({
+      minute: pen.minute, type: 'chance', side: pen.side,
+      text: `🧤 ${p.name} cobrou no ${label.toLowerCase()}, mas o goleiro defendeu!`,
+    });
+  } else {
+    if (detail.playerHome) detail.hs++;
+    else detail.as++;
+    detail.goals = (detail.goals || 0) + 1;
+    detail.myGoals = (detail.myGoals || 0) + 1;
+    detail.rating = Math.min(10, Math.round((detail.rating + 0.6) * 10) / 10);
+    detail.events.push({
+      minute: pen.minute, type: 'goal', side: pen.side,
+      text: `⚽ GOL! ${p.name} cobrou no ${label.toLowerCase()} e o goleiro não chegou.`,
+    });
+  }
+  detail.events.sort((a, b) => a.minute - b.minute);
+  return { saved, zone, keeperZone, label, keeperLabel: PENALTY_ZONES[keeperZone], minute: pen.minute };
+}
+
+/** Fecha o resultado da partida (necessário quando havia pênalti pendente). */
+export function finalizeMatch(career, detail) {
+  if (!detail || detail.finalized) return detail;
+  detail.finalized = true;
+  if (detail.resultKey && career.season) {
+    career.season.results[detail.resultKey] = { hs: detail.hs, as: detail.as };
+  }
+  if (detail.pendingOutcome) {
+    const bucket = detail.pendingOutcome;
+    detail.pendingOutcome = null;
+    applyMatchOutcome(career, detail, bucket);
+  }
+  return detail;
+}
+
+export function midWindowOffers(career) {
+  return career.midWindow && !career.midWindow.closed ? career.midWindow.offers : [];
+}
+
+/** Aceita uma proposta do meio da temporada: pré-contrato para a próxima. */
+export function signPreContract(career, clubId) {
+  const win = career.midWindow;
+  if (!win || win.closed) return null;
+  const offer = win.offers.find((o) => o.clubId === clubId);
+  if (!offer) return null;
+  career.preContract = { ...offer, preContract: true, signedYear: win.year };
+  win.closed = true;
+  news(career, `${career.player.name} assinou pré-contrato com o ${offer.clubName}: chega na próxima temporada.`, 'good');
+  return career.preContract;
+}
+
+export function closeMidWindow(career) {
+  if (career.midWindow) career.midWindow.closed = true;
+}
+
+export function refuseOffer(career, clubId, where = 'end') {
+  if (where === 'mid') {
+    if (career.midWindow) career.midWindow.offers = career.midWindow.offers.filter((o) => o.clubId !== clubId);
+    return;
+  }
+  career.offers = (career.offers || []).filter((o) => o.clubId !== clubId || o.stay);
+}
+
+/** Pedir melhoria na proposta: pode dar certo, depende da sua fama e do caixa. */
+export function negotiateOffer(career, clubId, where = 'end') {
+  const list = where === 'mid'
+    ? ((career.midWindow && career.midWindow.offers) || [])
+    : (career.offers || []);
+  const offer = list.find((o) => o.clubId === clubId);
+  if (!offer) return { ok: false, reason: 'notFound' };
+  if (offer.improved) return { ok: false, reason: 'already' };
+  const p = career.player;
+  const club = career.clubs[clubId];
+  const fin = ensureFinance(career, club);
+  const leverage = clamp(
+    0.28 + (overall(p) - club.strength) * 0.022 + p.reputation * 0.002 +
+    (p.awards || []).length * 0.03 - (p.stigma || 0) * 0.06 - (fin.cash < 0 ? 0.18 : 0),
+    0.05, 0.92,
+  );
+  offer.improved = true;
+  if (Math.random() < leverage) {
+    offer.wage = Math.round((offer.wage * rnd(1.08, 1.22)) / 500) * 500;
+    offer.years = Math.max(offer.years || 2, 3);
+    news(career, `${club.name} aceitou melhorar a proposta: ${formatMoney(offer.wage)}/mês por ${offer.years} temporadas.`, 'good');
+    return { ok: true, wage: offer.wage, offer };
+  }
+  news(career, `${club.name} recusou o pedido de melhoria e manteve ${formatMoney(offer.wage)}/mês.`, 'bad');
+  return { ok: false, reason: 'refused', wage: offer.wage, offer };
+}
+
 export function advanceRound(career, trainingId) {
   if (!career || !career.season) return null;
   C.syncCalendar(career);
@@ -874,6 +1138,16 @@ export function advanceRound(career, trainingId) {
   else if (ev.type === 'friendly') detail = playFriendly(career, ev);
 
   season.calIndex++;
+
+  // Janela do meio da temporada: propostas para assinar pré-contrato.
+  if (ev.type === 'league' && !career.midWindow && season.rounds.length > 3 &&
+    season.roundIndex >= Math.ceil(season.rounds.length / 2)) {
+    const offers = generateOffers(career);
+    career.midWindow = { year: season.year, round: season.roundIndex, offers, closed: offers.length === 0 };
+    if (offers.length) {
+      news(career, '🪟 A janela de transferências abriu no meio da temporada: você recebeu propostas.', 'info');
+    }
+  }
   return detail;
 }
 
@@ -1139,6 +1413,9 @@ function generateOffers(career) {
     const afford = clamp(fin.cash / 8e6 + 1, 0.45, 1.4);
     const role = club.strength > ov + 3 ? 'rotacao' : 'titular';
     const league = career.leagues.find((l) => l.id === club.leagueId);
+    const mates = career.clubs.filter((c) => c.leagueId === club.leagueId);
+    const avgSponsor = mates.reduce((sum, c) => sum + ensureFinance(career, c).sponsor.value, 0) / Math.max(1, mates.length);
+    const sponsorRatio = avgSponsor > 0 ? fin.sponsor.value / avgSponsor : 1;
     return {
       id: `offer-${i}`,
       clubId: club.id,
@@ -1153,6 +1430,12 @@ function generateOffers(career) {
       years: ri(2, 4),
       role,
       sponsor: fin.sponsor,
+      sponsorNote: fin.sponsor.brand === 'Sem patrocinador'
+        ? 'Sem patrocinador: nenhuma receita extra para bancar contratações.'
+        : `${SPONSOR_TIER_LABEL[fin.sponsor.tier] || 'Patrocínio'} (${fin.sponsor.brand}): ${formatMoney(fin.sponsor.value)}/ano, ${sponsorRatio >= 1.15 ? 'acima' : sponsorRatio <= 0.85 ? 'abaixo' : 'na média'} da divisão.`,
+      debtNote: fin.cash < 0
+        ? `Caixa de ${formatMoney(fin.cash)}: a dívida derruba a proposta e pode atrasar salários.`
+        : `Caixa de ${formatMoney(fin.cash)}: o clube paga em dia.`,
       inDebt: fin.cash < 0,
     };
   }).sort((a, b) => b.strength - a.strength);
@@ -1188,6 +1471,7 @@ function seasonScore(career, all) {
     (rating - 6.2) * 62) * (0.6 + 0.4 * level);
   if (career.champions && career.champions[career.season.leagueId] === p.clubId) score += 15;
   if (has('cc-')) score += 20;
+  if (has('dc-')) score += 6;
   if (has('cwc-')) score += 12;
   if (has('scwc-')) score += 16;
   if (has('cont-')) score += 10;
@@ -1353,6 +1637,10 @@ export function finishSeason(career) {
   };
 
   career.offers = [stay, ...generateOffers(career)];
+  if (career.preContract && career.preContract.clubId !== p.clubId) {
+    const pre = { ...career.preContract, preContract: true };
+    career.offers = [pre, ...career.offers.filter((o) => o.clubId !== pre.clubId)];
+  }
   career.seasonSummary = summary;
   return summary;
 }
@@ -1360,6 +1648,9 @@ export function finishSeason(career) {
 export function startNewSeason(career, clubId) {
   const p = career.player;
   p.age += 1;
+  p.yellowCount = 0;
+  career.midWindow = null;
+  career.preContract = null;
   p.fitness = 100;
   p.form = clamp(p.form + 4, 20, 100);
   p.morale = clamp(p.morale + 4, 20, 100);

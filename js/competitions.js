@@ -3,7 +3,7 @@
 
 import {
   COUNTRIES, COUNTRY_BY_CODE, NATIONAL_TEAMS, NATION_BY_CODE, CONFEDERATIONS, GENERIC_NAMES,
-  CONTINENTAL_CUPS,
+  CONTINENTAL_CUPS, DOMESTIC_CUPS,
 } from './data.js';
 import { clamp, ri, pick, hash, seededRng, poisson, expectedGoals, overall } from './core.js';
 
@@ -142,7 +142,7 @@ const GROUP_FIXTURES = [
   [[0, 3], [1, 2]],
 ];
 
-const STAGE_NAMES = { 1: 'Final', 2: 'Semifinais', 4: 'Quartas de final', 8: 'Oitavas de final', 16: 'Fase de 32' };
+const STAGE_NAMES = { 1: 'Final', 2: 'Semifinais', 4: 'Quartas de final', 8: 'Oitavas de final', 16: 'Fase de 32', 32: 'Fase de 64' };
 
 // Semanas da copa continental de clubes, por número de fases.
 const CC_WINDOWS = {
@@ -438,6 +438,15 @@ export function simCompToEnd(career, comp) {
 /* Calendário                                                          */
 /* ------------------------------------------------------------------ */
 
+/** Quantas vagas continentais cada liga de elite da confederação oferece. */
+export function continentalSpots(career, confed, size = (confed === 'UEFA' ? 32 : 16)) {
+  if (!confed) return 0;
+  const leagues = career.leagues.filter((l) => l.tier === 0 &&
+    (COUNTRY_BY_CODE[l.countryCode] || {}).confed === confed);
+  if (!leagues.length) return 0;
+  return Math.max(2, Math.min(8, Math.ceil(size / leagues.length)));
+}
+
 /**
  * Classificados para a copa continental de clubes: primeiros colocados da
  * temporada anterior em cada divisão de elite da confederação.
@@ -446,7 +455,7 @@ export function continentalClubPool(career, confed, size = 16) {
   const leagues = career.leagues.filter((l) => l.tier === 0 &&
     (COUNTRY_BY_CODE[l.countryCode] || {}).confed === confed);
   if (!leagues.length) return [];
-  const per = Math.max(2, Math.min(8, Math.ceil(size / leagues.length)));
+  const per = continentalSpots(career, confed, size);
   const ids = [];
   for (const league of leagues) {
     const previous = (career.lastTables && career.lastTables[league.id]) || [];
@@ -553,9 +562,26 @@ export function planSeason(career, leagueRounds = 38) {
     addPost(comp);
   }
 
+  const myClub = career.clubs[career.player.clubId];
+
+  // Copa nacional (mata-mata) do país do clube: todas as divisões entram.
+  if (myClub) {
+    const countryCupTeams = career.clubs.filter((c) => c.countryCode === myClub.countryCode).map((c) => c.id);
+    if (countryCupTeams.length >= 4) {
+      const cup = createKoComp(career, {
+        id: `dc-${year}`,
+        name: DOMESTIC_CUPS[myClub.countryCode] || 'Copa Nacional',
+        icon: '🏅', kind: 'club', year, participants: countryCupTeams,
+      });
+      const stageCount = cup.stageTotal;
+      const cupWindows = Array.from({ length: stageCount }, (_, i) =>
+        clamp(Math.round(((i + 1) * leagueRounds * 0.7) / stageCount), 1, leagueRounds - 1));
+      addSlots(cup, cupWindows);
+    }
+  }
+
   // Copa continental de clubes (Libertadores, Liga dos Campeões etc.),
   // com vaga para os primeiros colocados da liga na temporada anterior.
-  const myClub = career.clubs[career.player.clubId];
   const clubConfed = myClub ? (COUNTRY_BY_CODE[myClub.countryCode] || {}).confed : null;
   const cupInfo = CONTINENTAL_CUPS[clubConfed];
   if (cupInfo) {
