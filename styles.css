@@ -177,7 +177,6 @@ ul{margin:0;padding:0;list-style:none}
 .table tr.z-cc td:first-child{box-shadow:inset 3px 0 0 var(--blue)}
 .table tr.z-up td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .table tr.z-down td:first-child{box-shadow:inset 3px 0 0 var(--red)}
-.table tr.me td:first-child{box-shadow:inset 3px 0 0 var(--accent)}
 .legend{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px;font-size:11px;color:var(--mut)}
 .legend .dot{width:8px;height:8px;border-radius:2px;display:inline-block;margin-right:5px}
 .dot.blue{background:var(--blue)}
