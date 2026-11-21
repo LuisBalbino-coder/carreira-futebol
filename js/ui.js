@@ -1,7 +1,7 @@
 // Interface do jogo: menu, criação, central da carreira, transmissão, temporada e mercado.
 
 import * as E from './engine.js';
-import { COUNTRIES, ATTRS, POSITIONS, TRAININGS } from './data.js';
+import { COUNTRIES, ATTRS, POSITIONS, TRAININGS, SPONSOR_TIER_LABEL } from './data.js';
 import { createViewer } from './viewer.js';
 
 const SAVE_KEY = 'carreira-futebol-v1';
@@ -22,17 +22,17 @@ function save() {
   if (!career) return;
   try { localStorage.setItem(SAVE_KEY, JSON.stringify(career)); } catch (e) { /* sem storage */ }
 }
-function hasSave() {
-  try { return !!localStorage.getItem(SAVE_KEY); } catch (e) { return false; }
-}
 function loadSave() {
   try {
     const raw = localStorage.getItem(SAVE_KEY);
     if (!raw) return null;
     const data = JSON.parse(raw);
-    if (!data || !data.player || !data.season) return null;
+    if (!data || data.version !== 2 || !data.player || !data.season) return null;
     return data;
   } catch (e) { return null; }
+}
+function hasSave() {
+  return !!loadSave();
 }
 
 /* ------------------------------------------------------------------ */
@@ -49,7 +49,6 @@ function playerCard() {
   const ov = E.overall(p);
   const role = E.squadRole(career);
   const ps = career.season.pstats;
-  const avg = ps.apps ? (ps.ratingSum / ps.apps).toFixed(1).replace('.', ',') : '—';
 
   const attrs = ATTRS.filter((a) => a.key !== 'gol' || p.position === 'GOL')
     .map((a) => attrBar(a.name, p.attrs[a.key]))
@@ -82,9 +81,72 @@ function playerCard() {
       <div class="stat"><b>${ps.apps}</b><small>Jogos</small></div>
       <div class="stat"><b>${ps.goals}</b><small>Gols</small></div>
       <div class="stat"><b>${ps.assists}</b><small>Assist.</small></div>
-      <div class="stat"><b>${avg}</b><small>Nota</small></div>
+      <div class="stat"><b>${ps.apps ? (ps.ratingSum / ps.apps).toFixed(1).replace('.', ',') : '—'}</b><small>Nota</small></div>
     </div>
+    <p class="muted tiny" style="margin-top:8px">Estatísticas da liga. Copas e seleção aparecem no resumo da temporada.</p>
   </div>`;
+}
+
+function nationalCard() {
+  const n = E.nationalInfo(career);
+  if (!n) return '';
+  const status = n.status
+    ? `<span class="badge">convocado · ${E.ROLE_LABEL[n.role]}</span>`
+    : '<span class="badge gray">não convocado</span>';
+  return `<div class="card">
+    <h3>${n.flag} Seleção · ${esc(n.name)}</h3>
+    <div class="row between wrap" style="margin-bottom:8px">
+      <span class="muted tiny">Força da seleção ${n.strength}</span>
+      ${status}
+    </div>
+    <div class="kv"><span>Jogos (caps)</span><b>${n.caps}</b></div>
+    <div class="kv"><span>Gols pela seleção</span><b>${n.goals}</b></div>
+    <div class="kv"><span>Assistências</span><b>${n.assists}</b></div>
+    ${n.honours.length ? `<div class="divider"></div><div>${n.honours.map((h) => `<div class="badge gold" style="margin:3px 6px 3px 0">${esc(h)}</div>`).join('')}</div>` : ''}
+    <p class="muted tiny" style="margin-top:8px">${n.status ? 'Você está na lista para as próximas datas FIFA.' : 'Cresça e ganhe reputação para ser chamado.'}</p>
+  </div>`;
+}
+
+function financeCard() {
+  const f = E.clubFinanceInfo(career);
+  const tierLabel = SPONSOR_TIER_LABEL[f.sponsor.tier] || 'Patrocínio';
+  const cashColor = f.cash < 0 ? 'color:var(--red)' : f.cash < 5e6 ? 'color:var(--gold)' : '';
+  return `<div class="card">
+    <h3>Clube · finanças</h3>
+    <div class="kv"><span>Força do clube</span><b>${f.strength} · ${'★'.repeat(career.clubs[career.player.clubId].stars)}</b></div>
+    <div class="kv"><span>${tierLabel}</span><b>${esc(f.sponsor.brand)}</b></div>
+    <div class="kv"><span>Valor do patrocínio</span><b>${E.formatMoney(f.sponsor.value)}/ano</b></div>
+    <div class="kv"><span>Caixa do clube</span><b style="${cashColor}">${E.formatMoney(f.cash)}</b></div>
+    <div class="kv"><span>Torcida</span><b>${f.fanbase}/100</b></div>
+    <div class="kv"><span>Público no estádio</span><b>${f.attendance.attendance.toLocaleString('pt-BR')} de ${f.attendance.capacity.toLocaleString('pt-BR')}</b></div>
+    <div class="kv"><span>Seu salário</span><b>${E.formatMoney(f.wage)}/mês</b></div>
+    ${f.delayed > 0 ? `<p class="warn">⚠ Salários atrasados: ${f.delayed} ${f.delayed > 1 ? 'meses' : 'mês'} sem receber.</p>` : ''}
+    ${f.crisis ? '<p class="warn">⚠ Clube à beira da falência. A torcida abandonou o estádio.</p>' : f.broke ? '<p class="warn">⚠ Contas no vermelho. Contratações ficam difíceis.</p>' : ''}
+    <p class="muted tiny" style="margin-top:8px">Sua fama atrai patrocinadores: quanto maior sua reputação, maior a marca que o clube fecha.</p>
+  </div>`;
+}
+
+function competitionsCard() {
+  const list = E.competitionsInfo(career);
+  if (!list.length) return '';
+  const rows = list.map((c) => {
+    const cls = c.status === 'Campeão' ? 'gold' : c.status === 'Em disputa' ? '' : 'gray';
+    const stage = c.status === 'Em disputa' ? `<br><span class="muted tiny">${esc(c.stage)}</span>` : '';
+    return `<li class="list-item">
+      <span><span class="muted tiny">${c.kind === 'club' ? 'clube' : 'seleção'}</span> ${c.icon} ${esc(c.name)}</span>
+      <span class="r"><span class="badge ${cls}">${esc(c.status)}</span>${stage}</span>
+    </li>`;
+  }).join('');
+  return `<div class="card"><h3>Competições ${career.season.year}</h3><ul>${rows}</ul></div>`;
+}
+
+function newsCard() {
+  const list = E.newsList(career);
+  if (!list.length) return '';
+  const rows = list.map((n) => `<li class="list-item news ${n.kind === 'bad' ? 'bad' : n.kind === 'good' ? 'good' : ''}">
+      <span>${esc(n.text)}</span><span class="r">${n.year}</span>
+    </li>`).join('');
+  return `<div class="card"><h3>Notícias</h3><ul>${rows}</ul></div>`;
 }
 
 function standingsCard() {
@@ -127,7 +189,7 @@ function lastResults() {
   const items = career.season.history.slice(0, 5);
   if (!items.length) return '<p class="muted tiny">Nenhuma partida disputada nesta temporada.</p>';
   return items.map((h) => `<li class="list-item">
-      <span>${esc(h.home)} <b>${h.hs}–${h.as}</b> ${esc(h.away)}</span>
+      <span>${h.comp ? `<span class="muted tiny">${esc(h.comp)}</span><br>` : ''}${esc(h.home)} <b>${h.hs}–${h.as}</b> ${esc(h.away)}</span>
       <span class="r">${h.minutes}min${h.goals ? ` · ${h.goals}⚽` : ''}${h.assists ? ` · ${h.assists}A` : ''} · ${h.rating.toFixed(1)}</span>
     </li>`).join('');
 }
@@ -154,8 +216,9 @@ function viewMenu() {
       ${saved ? '<button class="btn primary" data-action="continue">Continuar carreira</button>' : ''}
       <button class="btn ${saved ? '' : 'primary'}" data-action="new">Nova carreira</button>
     </div>
-    <p class="note">13 países · 208 clubes · ligas e clubes fictícios, sem anúncios e sem custo.<br>
-      Seu progresso é salvo automaticamente neste navegador.</p>
+    <p class="note">18 países · 288 clubes · ligas fictícias<br>
+      Copas, Mundial de Clubes, seleções, patrocínios e finanças.<br>
+      Sem anúncios e sem custo. Progresso salvo neste navegador.</p>
   </div></div>`;
 }
 
@@ -194,31 +257,43 @@ function viewCreate() {
   </div></div>`;
 }
 
+function eventBlock(ev) {
+  const mine = ev.entity;
+  const homeMe = ev.homeId === mine;
+  const awayMe = ev.awayId === mine;
+  return `<div class="match-teams">
+      <div class="t ${homeMe ? 'you' : ''}">${ev.homeFlag ? `<span class="flag">${ev.homeFlag}</span> ` : ''}${esc(ev.homeName)}<small>Casa</small></div>
+      <div class="vs">VS</div>
+      <div class="t right ${awayMe ? 'you' : ''}">${ev.awayFlag ? `<span class="flag">${ev.awayFlag}</span> ` : ''}${esc(ev.awayName)}<small>Fora</small></div>
+    </div>`;
+}
+
 function viewHub() {
   const p = career.player;
   const club = career.clubs[p.clubId];
   const league = E.currentLeague(career);
-  const fx = E.nextFixture(career);
+  const ev = E.nextEvent(career);
   const role = E.squadRole(career);
   const totalRounds = career.season.rounds.length;
   const roundNo = Math.min(career.season.roundIndex + 1, totalRounds);
 
   let matchBlock;
-  if (fx) {
-    const homeClub = career.clubs[fx.home];
-    const awayClub = career.clubs[fx.away];
-    matchBlock = `<div class="match-teams">
-        <div class="t ${fx.home === p.clubId ? 'you' : ''}">${esc(homeClub.name)}<small>Casa</small></div>
-        <div class="vs">VS</div>
-        <div class="t right ${fx.away === p.clubId ? 'you' : ''}">${esc(awayClub.name)}<small>Fora</small></div>
-      </div>
+  if (ev) {
+    const isNational = ev.type === 'friendly' || (ev.comp && ev.comp.kind === 'nation');
+    const myRole = isNational ? E.nationalInfo(career).status : role;
+    matchBlock = `<div class="comp-line">${ev.compIcon ? `${ev.compIcon} ` : ''}${esc(ev.compName || '')} · ${esc(ev.stage || '')}</div>
+      ${eventBlock(ev)}
       <div class="row between wrap" style="margin-bottom:6px">
-        <span class="badge gray">Seu papel: ${E.ROLE_LABEL[role]}</span>
+        <span class="badge gray">Seu papel: ${myRole ? E.ROLE_LABEL[myRole] : '—'}</span>
         <span class="chip ${p.injuryWeeks > 0 ? 'on' : ''}">${p.injuryWeeks > 0 ? `Lesionado (${p.injuryWeeks} sem.)` : `Físico ${Math.round(p.fitness)}%`}</span>
       </div>`;
   } else {
     matchBlock = '<p class="muted">Temporada encerrada.</p>';
   }
+
+  const playLabel = ev && (ev.type === 'friendly' || (ev.comp && ev.comp.kind === 'nation'))
+    ? '▶ Assistir jogo da seleção'
+    : '▶ Assistir próximo jogo';
 
   return `<div class="shell">
     <div class="topbar">
@@ -229,7 +304,11 @@ function viewHub() {
       </div>
     </div>
     <div class="layout">
-      <div class="stack">${playerCard()}</div>
+      <div class="stack">
+        ${playerCard()}
+        ${nationalCard()}
+        ${financeCard()}
+      </div>
       <div class="stack col-main">
         <div class="card match-card">
           <div class="row between" style="margin-bottom:12px">
@@ -241,7 +320,7 @@ function viewHub() {
           <h3>Treino da semana</h3>
           <div class="trainings">${trainingPicker()}</div>
           <div class="row" style="margin-top:16px">
-            <button class="btn primary grow" data-action="play" ${fx ? '' : 'disabled'}>▶ Assistir rodada</button>
+            <button class="btn primary grow" data-action="play" ${ev ? '' : 'disabled'}>${playLabel}</button>
           </div>
           <p class="muted tiny" style="margin-top:10px">Durante a partida você só assiste. As decisões são suas: treino, clube e carreira.</p>
         </div>
@@ -249,9 +328,11 @@ function viewHub() {
           <h3>Últimos jogos</h3>
           <ul>${lastResults()}</ul>
         </div>
+        ${newsCard()}
       </div>
       <div class="stack">
         ${standingsCard()}
+        ${competitionsCard()}
         ${scorersCard()}
       </div>
     </div>
@@ -260,13 +341,18 @@ function viewHub() {
 
 function viewMatch() {
   const d = pendingDetail;
+  const crowd = d.crowd
+    ? `<div class="crowd">Público: ${d.crowd.attendance.toLocaleString('pt-BR')} (${Math.round(d.crowd.rate * 100)}% do estádio)</div>`
+    : '';
   return `<div class="match-screen">
+    <div class="comp-line center-line">${d.compIcon ? `${d.compIcon} ` : ''}${esc(d.compName || '')} · ${esc(d.stage || '')}</div>
     <div class="scoreboard">
-      <div class="side"><span class="dot" style="background:#3f8cff"></span><span>${esc(d.homeName)}</span></div>
+      <div class="side"><span class="dot" style="background:#3f8cff"></span><span>${d.homeFlag ? `${d.homeFlag} ` : ''}${esc(d.homeName)}</span></div>
       <div class="score" id="m-score">0 – 0</div>
-      <div class="side right"><span>${esc(d.awayName)}</span><span class="dot" style="background:#ff5c68"></span></div>
+      <div class="side right"><span>${d.awayFlag ? `${d.awayFlag} ` : ''}${esc(d.awayName)}</span><span class="dot" style="background:#ff5c68"></span></div>
       <div class="clock" id="m-clock">0'</div>
     </div>
+    ${crowd}
     <div class="match-body">
       <div>
         <canvas id="pitch" width="1000" height="620"></canvas>
@@ -297,18 +383,22 @@ function viewResult() {
   const outcome = d.playerHome
     ? (d.hs > d.as ? 'Vitória' : d.hs === d.as ? 'Empate' : 'Derrota')
     : (d.as > d.hs ? 'Vitória' : d.as === d.hs ? 'Empate' : 'Derrota');
+  const pens = d.pens
+    ? `<p class="muted tiny" style="margin-top:8px">Disputa de pênaltis: ${d.pens[0]}–${d.pens[1]} para ${esc(d.pens[0] > d.pens[1] ? d.homeName : d.awayName)}.</p>`
+    : '';
 
   return `<div class="shell" style="max-width:820px">
     <div class="card">
-      <h3>Fim de jogo · ${esc(career.season.leagueName)}</h3>
+      <h3>${esc(d.compName || 'Fim de jogo')} · ${esc(d.stage || '')}</h3>
       <div class="result-score">
-        <div class="t">${esc(d.homeName)}</div>
+        <div class="t">${d.homeFlag ? `${d.homeFlag} ` : ''}${esc(d.homeName)}</div>
         <div class="s">${d.hs} – ${d.as}</div>
-        <div class="t r">${esc(d.awayName)}</div>
+        <div class="t r">${d.awayFlag ? `${d.awayFlag} ` : ''}${esc(d.awayName)}</div>
       </div>
+      ${pens}
       <div class="row between wrap" style="margin-bottom:14px">
         <span class="badge ${outcome === 'Vitória' ? '' : outcome === 'Empate' ? 'gold' : 'red'}">${outcome}</span>
-        <span class="muted tiny">${goals.length} gol(s) na partida</span>
+        <span class="muted tiny">${goals.length} gol(s) na partida${d.crowd ? ` · público ${d.crowd.attendance.toLocaleString('pt-BR')}` : ''}</span>
       </div>
       <div class="stats-grid">
         <div class="stat"><b>${d.minutes}</b><small>Minutos</small></div>
@@ -333,16 +423,20 @@ function viewSeason() {
   const offers = career.offers.map((o) => `<button class="offer" data-offer="${o.clubId}">
       <span class="crest">${o.stars}★</span>
       <span>
-        <span class="nm">${esc(o.clubName)} ${o.stay ? '<span class="badge">renovar</span>' : ''}</span>
+        <span class="nm">${esc(o.clubName)} ${o.stay ? '<span class="badge">renovar</span>' : ''} ${o.inDebt ? '<span class="badge red">dívidas</span>' : ''}</span>
         <span class="dt">${o.flag} ${esc(o.leagueName)} · ${esc(o.countryName)} · força ${o.strength} · ${E.ROLE_LABEL[o.role]}</span>
+        <span class="dt">${o.sponsor && o.sponsor.brand !== 'Sem patrocinador' ? `Patrocínio: ${esc(o.sponsor.brand)} (${E.formatMoney(o.sponsor.value)}/ano)` : 'Sem patrocinador'}</span>
       </span>
       <span class="dt" style="text-align:right">${E.formatMoney(o.wage)}/mês<br>${o.years} temporadas</span>
     </button>`).join('');
 
   const top = s.tableTop.map((r, i) => `<li class="list-item"><span><span class="muted tiny">${i + 1}.</span> ${esc(r.name)} ${r.me ? '<span class="badge">você</span>' : ''}</span><span class="r">${r.pts} pts</span></li>`).join('');
   const scorers = s.topScorers.map((sc, i) => `<li class="list-item"><span><span class="muted tiny">${i + 1}.</span> ${esc(sc.name)} ${sc.isPlayer ? '<span class="badge">você</span>' : ''}</span><span class="r">${sc.goals} gols</span></li>`).join('');
-
-  const p = career.player;
+  const comps = (s.comps || []).map((c) => `<li class="list-item">
+      <span>${c.icon} ${esc(c.name)}</span>
+      <span class="r">${esc(c.status)}${c.championName && c.status !== 'Campeão' ? `<br><span class="muted tiny">${esc(c.championName)}</span>` : ''}</span>
+    </li>`).join('');
+  const f = s.finance;
 
   return `<div class="shell" style="max-width:880px">
     <div class="card" style="margin-bottom:16px">
@@ -365,12 +459,27 @@ function viewSeason() {
 
     <div class="layout" style="grid-template-columns:1fr 1fr;gap:16px">
       <div class="card"><h3>Classificação (top 6)</h3><ul>${top}</ul></div>
-      <div class="card"><h3>Artilharia</h3><ul>${scorers}</ul></div>
+      <div class="card"><h3>Artilharia da liga</h3><ul>${scorers}</ul></div>
+    </div>
+
+    <div class="layout" style="grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+      <div class="card"><h3>Campanhas nas copas</h3><ul>${comps || '<li class="muted tiny">Sem competições.</li>'}</ul></div>
+      <div class="card">
+        <h3>${esc(f.clubName)} · balanço</h3>
+        ${f.sponsor.brand === 'Sem patrocinador'
+          ? '<p class="warn">O clube terminou sem patrocinador.</p>'
+          : `<div class="kv"><span>Patrocínio</span><b>${esc(f.sponsor.brand)} · ${E.formatMoney(f.sponsor.value)}/ano</b></div>`}
+        <div class="kv"><span>Receitas</span><b>${E.formatMoney(f.revenue)}</b></div>
+        <div class="kv"><span>Despesas</span><b>${E.formatMoney(f.cost)}</b></div>
+        <div class="kv"><span>Caixa</span><b style="${f.cash < 0 ? 'color:var(--red)' : ''}">${E.formatMoney(f.cash)}</b></div>
+        <div class="kv"><span>Força do clube</span><b>${f.strength}</b></div>
+        ${f.delayed > 0 ? `<p class="warn">Salários atrasados há ${f.delayed} ${f.delayed > 1 ? 'meses' : 'mês'}.</p>` : ''}
+      </div>
     </div>
 
     <div class="card" style="margin-top:16px">
       <h3>Mercado de transferências · escolha seu destino</h3>
-      <p class="muted tiny" style="margin-bottom:14px">Você está com ${p.age} anos, geral ${E.overall(p)} e reputação de ${E.managerReputationLabel(p.reputation).toLowerCase()}.</p>
+      <p class="muted tiny" style="margin-bottom:14px">Você está com ${career.player.age} anos, geral ${E.overall(career.player)} e reputação de ${E.managerReputationLabel(career.player.reputation).toLowerCase()}.</p>
       ${offers}
       <div class="row" style="margin-top:16px">
         <button class="btn danger small" data-action="retire">Encerrar carreira</button>
@@ -400,6 +509,7 @@ function viewGameOver() {
         <div class="stat"><b>${p.stats.assists}</b><small>Assist.</small></div>
         <div class="stat"><b>${totalRating}</b><small>Nota média</small></div>
       </div>
+      <div class="kv" style="margin-top:12px"><span>Pela seleção</span><b>${p.national.caps} jogos · ${p.national.goals} gols</b></div>
       <div class="divider"></div>
       <h3>Conquistas</h3>
       ${honours}
@@ -427,7 +537,7 @@ function addFeed(ev) {
   feed.scrollTop = feed.scrollHeight;
 }
 
-function flashGoal(ev) {
+function flashGoal() {
   const div = document.createElement('div');
   div.className = 'goal-flash';
   div.innerHTML = '<b>GOL!</b>';
@@ -453,7 +563,7 @@ function startViewer() {
       if (el) el.textContent = `${home} – ${away}`;
     },
     onEvent: (ev) => addFeed(ev),
-    onGoal: (ev) => flashGoal(ev),
+    onGoal: () => flashGoal(),
     onFinish: () => {
       const btn = document.getElementById('match-continue');
       if (btn) btn.hidden = false;
@@ -492,11 +602,17 @@ function startNewCareer() {
 }
 
 function playRound() {
-  if (!career || E.seasonOver(career)) return;
+  if (!career) return;
+  if (E.seasonOver(career)) return;
   const detail = E.advanceRound(career, selectedTraining);
-  if (!detail) return;
-  pendingDetail = detail;
   save();
+  if (!detail) {
+    // jogo sem participação do jogador (ex.: bye) — segue para o próximo
+    enterCareer();
+    render();
+    return;
+  }
+  pendingDetail = detail;
   screen = 'match';
   render();
 }

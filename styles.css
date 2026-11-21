@@ -234,3 +234,20 @@ ul{margin:0;padding:0;list-style:none}
 .divider{height:1px;background:var(--line);margin:16px 0}
 .chip{font-size:11px;padding:3px 8px;border-radius:99px;background:rgba(255,255,255,.06);color:var(--mut);font-weight:700}
 .chip.on{background:var(--accent-dim);color:var(--accent)}
+
+/* ---------- copas / seleção / finanças ---------- */
+.comp-line{
+  font-size:11.5px;font-weight:800;letter-spacing:.7px;text-transform:uppercase;color:var(--gold);
+  margin-bottom:6px;
+}
+.center-line{text-align:center;margin:0 auto 10px;padding:6px 10px;border-radius:99px;background:rgba(255,201,74,.10);display:table}
+.crowd{text-align:center;font-size:11.5px;color:var(--mut);padding:6px 0;background:#0e1a29;border-left:1px solid var(--line2);border-right:1px solid var(--line2)}
+.match-teams .flag{font-size:15px}
+.warn{
+  margin-top:10px;font-size:12px;line-height:1.5;color:var(--gold);
+  background:rgba(255,201,74,.08);border:1px solid rgba(255,201,74,.28);border-radius:9px;padding:8px 10px;
+}
+.list-item.news{align-items:flex-start;font-size:12.5px;line-height:1.45}
+.list-item.news .r{font-size:11px;flex:0 0 auto}
+.list-item.news.good{color:#c9ffe0}
+.list-item.news.bad{color:#ffc2c8}
