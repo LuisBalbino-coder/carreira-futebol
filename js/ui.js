@@ -14,6 +14,7 @@ let createPos = 'MEI';
 let viewer = null;
 let pendingDetail = null;
 let pendingSummary = null;
+let marketNotice = null;
 
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const pct = (v) => Math.max(0, Math.min(100, Math.round(v)));
@@ -168,6 +169,7 @@ function midWindowCard() {
       <span class="badge gold">rodada ${win.round}</span>
     </div>
     <p class="muted tiny" style="margin-bottom:10px">Aceitar agora é um pré-contrato: você termina esta temporada no clube atual e se apresenta ao novo na próxima.</p>
+    ${marketNotice ? `<p class="warn">${esc(marketNotice)}</p>` : ''}
     ${offers || '<p class="muted tiny">Nenhuma proposta restante. Você segue no clube atual.</p>'}
     <div class="row" style="margin-top:10px"><button class="btn small ghost" data-action="mid-close">Fechar janela</button></div>
   </div>`;
@@ -224,7 +226,7 @@ function standingsCard() {
       <td><b>${r.pts}</b></td>
     </tr>`;
   }).join('');
-  const legend = [];
+  const legend = ['<span><i class="dot mine"></i>Seu clube</span>'];
   if (zone.continental) legend.push(`<span><i class="dot blue"></i>${esc(zone.continentalCup)} · ${zone.continental} vagas</span>`);
   if (zone.promotion) legend.push(`<span><i class="dot green"></i>Acesso · ${zone.promotion}</span>`);
   if (zone.relegation) legend.push(`<span><i class="dot red"></i>Rebaixamento · ${zone.relegation}</span>`);
@@ -578,6 +580,7 @@ function viewSeason() {
     <div class="card" style="margin-top:16px">
       <h3>Mercado de transferências · escolha seu destino</h3>
       <p class="muted tiny" style="margin-bottom:14px">Você está com ${career.player.age} anos, geral ${E.overall(career.player)} e reputação de ${E.managerReputationLabel(career.player.reputation).toLowerCase()}.</p>
+      ${marketNotice ? `<p class="warn">${esc(marketNotice)}</p>` : ''}
       ${offers}
       <div class="row" style="margin-top:16px">
         <button class="btn danger small" data-action="retire">Encerrar carreira</button>
@@ -768,6 +771,7 @@ function render() {
 }
 
 function startNewCareer() {
+  marketNotice = null;
   const nameEl = document.getElementById('p-name');
   const countryEl = document.getElementById('p-country');
   const name = nameEl ? nameEl.value : '';
@@ -832,6 +836,7 @@ app.addEventListener('click', (e) => {
 
   const offerBtn = e.target.closest('[data-offer]');
   if (offerBtn) {
+    marketNotice = null;
     const clubId = Number(offerBtn.dataset.offer);
     if (offerBtn.dataset.where === 'mid') {
       E.signPreContract(career, clubId);
@@ -845,7 +850,14 @@ app.addEventListener('click', (e) => {
 
   const negBtn = e.target.closest('[data-negotiate]');
   if (negBtn) {
-    E.negotiateOffer(career, Number(negBtn.dataset.negotiate), negBtn.dataset.where || 'end');
+    const res = E.negotiateOffer(career, Number(negBtn.dataset.negotiate), negBtn.dataset.where || 'end');
+    marketNotice = res.ok
+      ? `Proposta melhorada: agora ${E.formatMoney(res.wage)}/mês por ${res.offer.years} temporadas.`
+      : res.reason === 'refused'
+        ? 'O clube recusou o pedido de melhoria e manteve a proposta.'
+        : res.reason === 'already'
+          ? 'Você já pediu melhoria nessa proposta.'
+          : 'Proposta indisponível.';
     save();
     render();
     return;
@@ -853,6 +865,7 @@ app.addEventListener('click', (e) => {
 
   const refBtn = e.target.closest('[data-refuse]');
   if (refBtn) {
+    marketNotice = null;
     E.refuseOffer(career, Number(refBtn.dataset.refuse), refBtn.dataset.where || 'end');
     save();
     render();
