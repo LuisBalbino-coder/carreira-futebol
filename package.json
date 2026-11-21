@@ -1,0 +1,7 @@
+{
+  "name": "carreira-futebol",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Jogo de futebol 2D em modo carreira (HTML5 + canvas, sem dependências)."
+}
